@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials
+      # 2. Configure AWS credentials (needed for ECR push)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -32,7 +32,7 @@ jobs:
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       # 4. Build and Push Docker Image
       - name: Build and Push Docker Image
@@ -42,45 +42,42 @@ jobs:
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
 
-      # 5. Deploy to EC2
+      # 5. Deploy to EC2 (uses IAM Role)
       - name: Deploy to EC2
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          # Save SSH key to file
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          # Run SSH commands with inline script
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
-            
-            # Set environment variables
-            export AWS_REGION=${AWS_REGION}
-            export ECR_REGISTRY=${ECR_REGISTRY}
-            export ECR_REPO=${ECR_REPO}
-            export IMAGE_TAG=${IMAGE_TAG}
-            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-            export AWS_DEFAULT_REGION=${AWS_REGION}
-            
-            # Login to ECR
-            aws ecr get-login-password --region $AWS_REGION | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY
-            
-            # Pull and run container
-            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-            docker stop app || true
-            docker rm app || true
-            docker run -d \
-              --restart always \
-              -p 3000:3000 \
-              --name app \
-              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-            
-            EOF
+            -i /tmp/private_key.pem ubuntu@$EC2_IP <<'EOF'
+
+AWS_REGION=ap-south-1
+ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com
+ECR_REPO=devops-app-repo
+IMAGE_TAG=latest
+
+# Login to ECR via IAM Role
+aws ecr get-login-password --region $AWS_REGION | \
+  docker login --username AWS --password-stdin $ECR_REGISTRY
+
+# Pull latest image
+docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+
+# Restart container
+docker stop app || true
+docker rm app || true
+
+docker run -d \
+  --restart always \
+  -p 3000:3000 \
+  --name app \
+  $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+
+EOF
 
       # 6. Verify Deployment
       - name: Verify Deployment
@@ -88,22 +85,19 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          # Save SSH key to file
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          # Wait for container to start
           sleep 10
 
-          # Verify container is running
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
 
       # 7. Slack Notification
       - name: Slack Notification
-        if: always()   # Run on success or failure
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
