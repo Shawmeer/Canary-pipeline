@@ -14,8 +14,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname === "/") {
     const env = process.env.ENVIRONMENT || 'development';
+    const version = process.env.VERSION || 'unknown';
+    const gitSha = process.env.GIT_SHA || 'unknown';
     return sendJson(res, 200, {
-      message: `Simple Node.js backend service is running in ${env} environment`
+      message: `Simple Node.js backend service is running in ${env} environment`,
+      version: version,
+      git_sha: gitSha
     });
   }
 

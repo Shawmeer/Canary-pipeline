@@ -15,22 +15,52 @@ on:
 env:
   AWS_REGION: ap-south-1
   ECR_REGISTRY: 317287357166.dkr.ecr.ap-south-1.amazonaws.com
+  ECR_REPO: devops-app-repo
 
 jobs:
-  # Security Scan Job
-  security-scan:
+  # Get version info
+  get-version:
     runs-on: ubuntu-latest
     outputs:
-      scan-passed: ${{ steps.trivy.outputs.scan-passed }}
-    env:
-      ECR_REPO: ${{ github.ref_name == 'main' && 'devops-app-prod' || github.ref_name == 'staging' && 'devops-app-staging' || 'devops-app-dev' }}
-      IMAGE_TAG: ${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+      version: ${{ steps.version.outputs.version }}
+      git_sha: ${{ steps.version.outputs.git_sha }}
+      git_short: ${{ steps.version.outputs.git_short }}
+      branch: ${{ github.ref_name }}
     steps:
-      # 1. Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials (needed for ECR pull)
+      - name: Get version info
+        id: version
+        run: |
+          GIT_SHA="${{ github.sha }}"
+          GIT_SHORT="${GIT_SHA:0:7}"
+          
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            VERSION="latest"
+          elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+            VERSION="staging"
+          else
+            VERSION="dev"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "git_sha=$GIT_SHA" >> $GITHUB_OUTPUT
+          echo "git_short=$GIT_SHORT" >> $GITHUB_OUTPUT
+
+  # Security Scan Job
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: get-version
+    outputs:
+      scan-passed: ${{ steps.trivy.outputs.scan-passed }}
+    env:
+      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
+      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -38,20 +68,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Login to ECR
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      # 4. Build Docker Image
       - name: Build Docker Image
         run: |
           docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
           docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
 
-      # 5. Run Trivy Security Scan
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -65,35 +94,26 @@ jobs:
           ignore-unfixed: true
         id: trivy
 
-      # 6. Upload Trivy Results as Artifact
       - name: Upload Trivy Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-scan-results-${{ github.ref_name }}
+          name: trivy-scan-results-${{ needs.get-version.outputs.branch }}
           path: trivy-results.sarif
           retention-days: 30
-
-      # 7. Publish Trivy Results to GitHub Security
-      - name: Publish Trivy Results to GitHub Security
-        if: false
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
 
   # Build and Push Job
   build-and-push:
     runs-on: ubuntu-latest
-    needs: security-scan
+    needs: [get-version, security-scan]
     env:
-      ECR_REPO: ${{ github.ref_name == 'main' && 'devops-app-prod' || github.ref_name == 'staging' && 'devops-app-staging' || 'devops-app-dev' }}
-      IMAGE_TAG: ${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
+      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+      BRANCH: ${{ needs.get-version.outputs.branch }}
     steps:
-      # 1. Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials (needed for ECR push)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -101,78 +121,108 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Login to ECR
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      # 4. Build and Push Docker Image
-      - name: Build and Push Docker Image
+      - name: Build Docker Image
         run: |
           docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
           docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+
+      - name: Push Docker Image
+        run: |
           docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+
+      - name: Create Deployment Info
+        run: |
+          cat > deployment-info.json << EOF
+          {
+            "version": "${{ needs.get-version.outputs.version }}",
+            "git_sha": "${{ needs.get-version.outputs.git_sha }}",
+            "git_short": "${{ needs.get-version.outputs.git_short }}",
+            "branch": "${{ needs.get-version.outputs.branch }}",
+            "ecr_repo": "${{ env.ECR_REPO }}",
+            "image_tag": "${{ env.IMAGE_TAG }}",
+            "image_url": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}"
+          }
+          EOF
+
+      - name: Upload Deployment Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info-${{ needs.get-version.outputs.branch }}
+          path: deployment-info.json
+          retention-days: 30
 
   # Deploy Job
   deploy:
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [get-version, build-and-push]
     environment:
-      name: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
+      name: ${{ needs.get-version.outputs.branch == 'main' && 'production' || needs.get-version.outputs.branch == 'staging' && 'staging' || 'development' }}
     env:
-      ECR_REPO: ${{ github.ref_name == 'main' && 'devops-app-prod' || github.ref_name == 'staging' && 'devops-app-staging' || 'devops-app-dev' }}
-      IMAGE_TAG: ${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
+      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
-      # 1. Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Deploy to EC2 (uses IAM Role)
       - name: Deploy to EC2
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ needs.get-version.outputs.branch }}
         run: |
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          # Deploy single environment based on branch
           if [ "$BRANCH" = "main" ]; then
-            ENV_NAME="production"; PORT="3000"; CONTAINER_NAME="app-prod"; ECR_REPO="devops-app-prod"; IMAGE_TAG="latest"
+            ENV_NAME="production"; PORT="3000"; CONTAINER_NAME="app-prod"
           elif [ "$BRANCH" = "staging" ]; then
-            ENV_NAME="staging"; PORT="3001"; CONTAINER_NAME="app-staging"; ECR_REPO="devops-app-staging"; IMAGE_TAG="staging"
+            ENV_NAME="staging"; PORT="3001"; CONTAINER_NAME="app-staging"
           else
-            ENV_NAME="development"; PORT="3002"; CONTAINER_NAME="app-dev"; ECR_REPO="devops-app-dev"; IMAGE_TAG="dev"
+            ENV_NAME="development"; PORT="3002"; CONTAINER_NAME="app-dev"
           fi
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "sudo bash -c 'ECR_REGISTRY=${{ env.ECR_REGISTRY }} && \
-            ECR_REPO=$ECR_REPO && \
-            IMAGE_TAG=$IMAGE_TAG && \
+            ECR_REPO=${{ env.ECR_REPO }} && \
+            IMAGE_TAG=${{ env.IMAGE_TAG }} && \
             ENVIRONMENT=$ENV_NAME && \
             PORT=$PORT && \
             CONTAINER_NAME=$CONTAINER_NAME && \
+            VERSION=${{ env.VERSION }} && \
+            GIT_SHA=${{ env.GIT_SHA }} && \
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
             docker stop $CONTAINER_NAME || true && \
             docker rm $CONTAINER_NAME || true && \
-            docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=\$ENVIRONMENT --name $CONTAINER_NAME $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
+            docker run -d --restart always -p $PORT:3000 \
+              -e ENVIRONMENT=\$ENVIRONMENT \
+              -e VERSION=\$VERSION \
+              -e GIT_SHA=\$GIT_SHA \
+              --name $CONTAINER_NAME $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
 
-      # 3. Slack Notification
       - name: Slack Notification
         if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          BRANCH: ${{ github.ref_name }}
-          ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
+          BRANCH: ${{ needs.get-version.outputs.branch }}
+          ENVIRONMENT: ${{ needs.get-version.outputs.branch == 'main' && 'production' || needs.get-version.outputs.branch == 'staging' && 'staging' || 'development' }}
+          VERSION: ${{ needs.get-version.outputs.version }}
+          GIT_SHA: ${{ needs.get-version.outputs.git_short }}
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             STATUS="SUCCESS"
@@ -182,7 +232,7 @@ jobs:
 
           if [ -n "$SLACK_WEBHOOK" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"Deployment $STATUS to $ENVIRONMENT for $GITHUB_REPOSITORY on branch $BRANCH\"}" \
+              --data "{\"text\":\"Deployment $STATUS to $ENVIRONMENT for $GITHUB_REPOSITORY\\nBranch: $BRANCH\\nVersion: $VERSION\\nGit SHA: $GIT_SHA\"}" \
               "$SLACK_WEBHOOK"
           else
             echo "SLACK_WEBHOOK not configured, skipping notification"
