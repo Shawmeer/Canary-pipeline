@@ -86,10 +86,15 @@ jobs:
             "docker ps | grep app"
 
       - name: Slack Notification
-        if: always() && secrets.SLACK_WEBHOOK != ''
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
+          if [ -z "$SLACK_WEBHOOK" ]; then
+            echo "SLACK_WEBHOOK is not set. Skipping notification."
+            exit 0
+          fi
+
           if [ ${{ job.status }} == 'success' ]; then
             STATUS="SUCCESS"
           else
