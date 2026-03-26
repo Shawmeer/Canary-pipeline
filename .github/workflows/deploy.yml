@@ -48,8 +48,23 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
+          # Save SSH key to file
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+          # Run SSH commands with inline script
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
+            -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
+            
+            # Set environment variables
+            export AWS_REGION=${AWS_REGION}
+            export ECR_REGISTRY=${ECR_REGISTRY}
+            export ECR_REPO=${ECR_REPO}
+            export IMAGE_TAG=${IMAGE_TAG}
+            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+            export AWS_DEFAULT_REGION=${AWS_REGION}
             
             # Login to ECR
             aws ecr get-login-password --region $AWS_REGION | \
@@ -73,7 +88,15 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
+          # Save SSH key to file
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+          # Wait for container to start
           sleep 10
+
+          # Verify container is running
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
@@ -84,7 +107,7 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          if [ ${{ job.status }} == 'success' ]; then
+          if [ "${{ job.status }}" == "success" ]; then
             STATUS="SUCCESS"
           else
             STATUS="FAILURE"
