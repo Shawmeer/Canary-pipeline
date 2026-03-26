@@ -39,8 +39,13 @@ jobs:
         run: docker push 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest
 
       - name: Deploy to EC2
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_IP }} "
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+          ssh -o StrictHostKeyChecking=no -i /tmp/private_key.pem ubuntu@$EC2_IP "
             sudo docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest &&
             sudo docker stop app || true &&
             sudo docker rm app || true &&
