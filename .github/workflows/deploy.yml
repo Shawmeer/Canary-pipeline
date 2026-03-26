@@ -146,10 +146,11 @@ jobs:
             "sudo bash -c 'ECR_REGISTRY=${{ env.ECR_REGISTRY }} && \
             ECR_REPO=${{ env.ECR_REPO }} && \
             IMAGE_TAG=${{ env.IMAGE_TAG }} && \
+            ENVIRONMENT=${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }} && \
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
             docker stop app || true && \
             docker rm app || true && \
-            docker run -d --restart always -p 3000:3000 --name app $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
+            docker run -d --restart always -p 3000:3000 -e ENVIRONMENT=$ENVIRONMENT --name app $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \

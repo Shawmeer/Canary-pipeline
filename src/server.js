@@ -13,8 +13,9 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "GET" && url.pathname === "/") {
+    const env = process.env.ENVIRONMENT || 'development';
     return sendJson(res, 200, {
-      message: "Simple Node.js backend service is running in " + (process.env.NODE_ENV || 'dev') + " environment"
+      message: `Simple Node.js backend service is running in ${env} environment`
     });
   }
 
