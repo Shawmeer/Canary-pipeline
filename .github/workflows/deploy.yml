@@ -22,7 +22,6 @@ jobs:
   get-version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
       git_sha: ${{ steps.version.outputs.git_sha }}
       git_short: ${{ steps.version.outputs.git_short }}
       branch: ${{ github.ref_name }}
@@ -35,16 +34,6 @@ jobs:
         run: |
           GIT_SHA="${{ github.sha }}"
           GIT_SHORT="${GIT_SHA:0:7}"
-          
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            VERSION="latest"
-          elif [[ "${{ github.ref_name }}" == "staging" ]]; then
-            VERSION="staging"
-          else
-            VERSION="dev"
-          fi
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "git_sha=$GIT_SHA" >> $GITHUB_OUTPUT
           echo "git_short=$GIT_SHORT" >> $GITHUB_OUTPUT
 
@@ -55,7 +44,6 @@ jobs:
     outputs:
       scan-passed: ${{ steps.trivy.outputs.scan-passed }}
     env:
-      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
     steps:
       - name: Checkout
@@ -73,20 +61,34 @@ jobs:
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      - name: Build Docker Image
+      # Build or pull based on branch
+      - name: Build or Pull Image for Scan
         run: |
-          docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
-          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
-          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+          BRANCH="${{ needs.get-version.outputs.branch }}"
+          GIT_SHA="${{ env.GIT_SHA }}"
+          
+          if [ "$BRANCH" = "dev" ]; then
+            # Build from scratch for dev
+            docker build -t ${{ env.ECR_REPO }}:dev .
+            docker tag ${{ env.ECR_REPO }}:dev \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:dev
+            docker tag ${{ env.ECR_REPO }}:dev \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA
+          else
+            # Pull existing image for staging/prod promotion
+            SOURCE_TAG="$([ "$BRANCH" = "staging" ] && echo "dev" || echo "staging")"
+            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA || \
+              docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$SOURCE_TAG
+            docker tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$SOURCE_TAG \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA
+          fi
 
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
           scanners: vuln
-          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}'
+          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL'
@@ -102,12 +104,11 @@ jobs:
           path: trivy-results.sarif
           retention-days: 30
 
-  # Build and Push Job
+  # Build and Push Job with Image Promotion
   build-and-push:
     runs-on: ubuntu-latest
     needs: [get-version, security-scan]
     env:
-      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
       BRANCH: ${{ needs.get-version.outputs.branch }}
     steps:
@@ -126,30 +127,45 @@ jobs:
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      - name: Build Docker Image
+      - name: Build or Promote Image
         run: |
-          docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
-          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
-          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
-
-      - name: Push Docker Image
-        run: |
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+          BRANCH="${{ env.BRANCH }}"
+          GIT_SHA="${{ env.GIT_SHA }}"
+          ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          ECR_REPO="${{ env.ECR_REPO }}"
+          
+          if [ "$BRANCH" = "dev" ]; then
+            echo "Building new image for dev branch..."
+            docker build -t $ECR_REPO:dev .
+            docker tag $ECR_REPO:dev $ECR_REGISTRY/$ECR_REPO:dev
+            docker tag $ECR_REPO:dev $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            docker push $ECR_REGISTRY/$ECR_REPO:dev
+            docker push $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            
+          elif [ "$BRANCH" = "staging" ]; then
+            echo "Promoting dev image to staging..."
+            # Pull the exact SHA image from dev
+            docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:staging
+            docker push $ECR_REGISTRY/$ECR_REPO:staging
+            
+          else
+            echo "Promoting staging image to production..."
+            # Pull the exact SHA image from staging
+            docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:latest
+            docker push $ECR_REGISTRY/$ECR_REPO:latest
+          fi
 
       - name: Create Deployment Info
         run: |
           cat > deployment-info.json << EOF
           {
-            "version": "${{ needs.get-version.outputs.version }}",
             "git_sha": "${{ needs.get-version.outputs.git_sha }}",
             "git_short": "${{ needs.get-version.outputs.git_short }}",
             "branch": "${{ needs.get-version.outputs.branch }}",
             "ecr_repo": "${{ env.ECR_REPO }}",
-            "image_tag": "${{ env.IMAGE_TAG }}",
-            "image_url": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}"
+            "image_url": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ needs.get-version.outputs.branch == 'main' && 'latest' || needs.get-version.outputs.branch }}"
           }
           EOF
 
@@ -167,9 +183,9 @@ jobs:
     environment:
       name: ${{ needs.get-version.outputs.branch == 'main' && 'production' || needs.get-version.outputs.branch == 'staging' && 'staging' || 'development' }}
     env:
-      IMAGE_TAG: ${{ needs.get-version.outputs.version }}
+      IMAGE_TAG: ${{ needs.get-version.outputs.branch == 'main' && 'latest' || needs.get-version.outputs.branch }}
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-      VERSION: ${{ needs.get-version.outputs.version }}
+      VERSION: ${{ needs.get-version.outputs.branch == 'main' && 'latest' || needs.get-version.outputs.branch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -185,18 +201,18 @@ jobs:
           chmod 600 /tmp/private_key.pem
 
           if [ "$BRANCH" = "main" ]; then
-            ENV_NAME="production"; PORT="3000"; CONTAINER_NAME="app-prod"
+            ENV_NAME="production"; PORT="3000"; CONTAINER_NAME="app-prod"; IMAGE_TAG="latest"
           elif [ "$BRANCH" = "staging" ]; then
-            ENV_NAME="staging"; PORT="3001"; CONTAINER_NAME="app-staging"
+            ENV_NAME="staging"; PORT="3001"; CONTAINER_NAME="app-staging"; IMAGE_TAG="staging"
           else
-            ENV_NAME="development"; PORT="3002"; CONTAINER_NAME="app-dev"
+            ENV_NAME="development"; PORT="3002"; CONTAINER_NAME="app-dev"; IMAGE_TAG="dev"
           fi
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "sudo bash -c 'ECR_REGISTRY=${{ env.ECR_REGISTRY }} && \
             ECR_REPO=${{ env.ECR_REPO }} && \
-            IMAGE_TAG=${{ env.IMAGE_TAG }} && \
+            IMAGE_TAG=$IMAGE_TAG && \
             ENVIRONMENT=$ENV_NAME && \
             PORT=$PORT && \
             CONTAINER_NAME=$CONTAINER_NAME && \
@@ -221,7 +237,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           BRANCH: ${{ needs.get-version.outputs.branch }}
           ENVIRONMENT: ${{ needs.get-version.outputs.branch == 'main' && 'production' || needs.get-version.outputs.branch == 'staging' && 'staging' || 'development' }}
-          VERSION: ${{ needs.get-version.outputs.version }}
+          VERSION: ${{ needs.get-version.outputs.branch == 'main' && 'latest' || needs.get-version.outputs.branch }}
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
         run: |
           if [ "${{ job.status }}" == "success" ]; then
