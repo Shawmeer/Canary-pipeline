@@ -47,25 +47,11 @@ jobs:
         run: |
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
-          ssh -o StrictHostKeyChecking=no -i /tmp/private_key.pem ubuntu@$EC2_IP "
-            mkdir -p ~/.aws &&
-            echo '[default]' > ~/.aws/credentials &&
-            echo 'aws_access_key_id=$AWS_ACCESS_KEY_ID' >> ~/.aws/credentials &&
-            echo 'aws_secret_access_key=$AWS_SECRET_ACCESS_KEY' >> ~/.aws/credentials &&
-            echo '[default]' > ~/.aws/config &&
-            echo 'region=ap-south-1' >> ~/.aws/config &&
-            sudo apt update -y && sudo apt upgrade -y &&
-            sudo apt install docker.io -y &&
-            sudo systemctl start docker &&
-            sudo systemctl enable docker &&
-            sudo usermod -aG docker ubuntu || true;
-            sudo apt install unzip -y 
-            curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip &&
-            unzip -q /tmp/awscliv2.zip -d /tmp &&
-            sudo /tmp/aws/install &&
+          ssh -o StrictHostKeyChecking=no -i /tmp/private_key.pem ubuntu@$EC2_IP 
+           
             aws ecr get-login-password --region ap-south-1 | sudo docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com;
-            sudo docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest &&
-            sudo docker stop app || true &&
-            sudo docker rm app || true &&
-            sudo docker run -d -p 80:3000 --name app 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest
+            sdo docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest &&
+             docker stop app || true &&
+             docker rm app || true &&
+             docker run -d -p 80:3000 --name app 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest
           "
