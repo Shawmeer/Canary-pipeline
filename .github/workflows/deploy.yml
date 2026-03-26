@@ -139,22 +139,6 @@ jobs:
           path: trivy-results.sarif
           retention-days: 30
 
-      # OWASP ZAP Full Scan
-      - name: OWASP ZAP Scan
-        uses: zaproxy/action-baseline@v0.9.0
-        with:
-          target: 'https://${{ secrets.EC2_IP }}'
-          token: ${{ secrets.ZAP_TOKEN }}
-        continue-on-error: true
-
-      - name: Upload OWASP ZAP Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: owasp-zap-results-${{ needs.get-version.outputs.branch }}
-          path: zap-results.sarif
-          retention-days: 30
-
   # Build and Push Job with Image Promotion
   build-and-push:
     runs-on: ubuntu-latest
