@@ -52,15 +52,12 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          # Run deployment commands via SSH
+          # Run deployment commands via SSH (EC2 has IAM Role for ECR access)
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "sudo bash -c 'AWS_REGION=ap-south-1 && \
-            ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com && \
+            "sudo bash -c 'ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com && \
             ECR_REPO=devops-app-repo && \
             IMAGE_TAG=latest && \
-            aws ecr get-login-password --region $AWS_REGION | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY && \
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
             docker stop app || true && \
             docker rm app || true && \
