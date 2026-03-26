@@ -139,6 +139,23 @@ jobs:
           path: trivy-results.sarif
           retention-days: 30
 
+      # Snyk Security Scan
+      - name: Snyk Vulnerability Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=critical --sarif-file-output=snyk-results.sarif
+        continue-on-error: true
+
+      - name: Upload Snyk Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-scan-results-${{ needs.get-version.outputs.branch }}
+          path: snyk-results.sarif
+          retention-days: 30
+
   # Build and Push Job with Image Promotion
   build-and-push:
     runs-on: ubuntu-latest
