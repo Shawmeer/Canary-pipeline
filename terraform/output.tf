@@ -8,9 +8,12 @@ output "ec2_public_ip" {
   value = aws_instance.web.public_ip
 }
 
-output "ecr_repository_arn" {
-  value = aws_ecr_repository.app.arn
+output "ecr_repository_prod_url" {
+  value = aws_ecr_repository.prod.repository_url
 }
-output "ecr_repository_url" {
-  value = aws_ecr_repository.app.repository_url
+output "ecr_repository_dev_url" {
+  value = aws_ecr_repository.dev.repository_url
+}
+output "ecr_repository_staging_url" {
+  value = aws_ecr_repository.staging.repository_url
 }
