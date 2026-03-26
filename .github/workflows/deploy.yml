@@ -135,23 +135,28 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
           BRANCH: ${{ github.ref_name }}
-          ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
-          PORT: ${{ github.ref_name == 'main' && '3000' || github.ref_name == 'staging' && '3001' || '3002' }}
-          CONTAINER_NAME: ${{ github.ref_name == 'main' && 'app-prod' || github.ref_name == 'staging' && 'app-staging' || 'app-dev' }}
         run: |
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          # Run deployment commands via SSH (EC2 has IAM Role for ECR access)
+          # Deploy single environment based on branch
+          if [ "$BRANCH" = "main" ]; then
+            ENV_NAME="production"; PORT="3000"; CONTAINER_NAME="app-prod"; ECR_REPO="devops-app-prod"; IMAGE_TAG="latest"
+          elif [ "$BRANCH" = "staging" ]; then
+            ENV_NAME="staging"; PORT="3001"; CONTAINER_NAME="app-staging"; ECR_REPO="devops-app-staging"; IMAGE_TAG="staging"
+          else
+            ENV_NAME="development"; PORT="3002"; CONTAINER_NAME="app-dev"; ECR_REPO="devops-app-dev"; IMAGE_TAG="dev"
+          fi
+
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "sudo bash -c 'ECR_REGISTRY=${{ env.ECR_REGISTRY }} && \
-            ECR_REPO=${{ env.ECR_REPO }} && \
-            IMAGE_TAG=${{ env.IMAGE_TAG }} && \
-            ENVIRONMENT=${{ env.ENVIRONMENT }} && \
-            PORT=${{ env.PORT }} && \
-            CONTAINER_NAME=${{ env.CONTAINER_NAME }} && \
+            ECR_REPO=$ECR_REPO && \
+            IMAGE_TAG=$IMAGE_TAG && \
+            ENVIRONMENT=$ENV_NAME && \
+            PORT=$PORT && \
+            CONTAINER_NAME=$CONTAINER_NAME && \
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
             docker stop $CONTAINER_NAME || true && \
             docker rm $CONTAINER_NAME || true && \
@@ -159,7 +164,7 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker ps | grep ${{ env.CONTAINER_NAME }}"
+            "docker ps | grep app"
 
       # 3. Slack Notification
       - name: Slack Notification
