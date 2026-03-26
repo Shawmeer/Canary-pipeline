@@ -160,7 +160,7 @@ jobs:
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
             docker stop $CONTAINER_NAME || true && \
             docker rm $CONTAINER_NAME || true && \
-            docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=$ENVIRONMENT --name $CONTAINER_NAME $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
+            docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=\$ENVIRONMENT --name $CONTAINER_NAME $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
