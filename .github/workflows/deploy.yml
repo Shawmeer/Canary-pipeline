@@ -27,7 +27,7 @@ jobs:
 
       - name: Login to ECR
         run: |
-          aws ecr get-login-password | docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
+          aws ecr get-login-password | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPO }}
 
       - name: Build Image
         run: docker build -t $ECR_REPO .
