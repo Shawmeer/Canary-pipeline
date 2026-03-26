@@ -48,9 +48,12 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
           ssh -o StrictHostKeyChecking=no -i /tmp/private_key.pem ubuntu@$EC2_IP "
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID &&
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY &&
-            export AWS_DEFAULT_REGION=ap-south-1 &&
+            mkdir -p ~/.aws &&
+            echo '[default]' > ~/.aws/credentials &&
+            echo 'aws_access_key_id=$AWS_ACCESS_KEY_ID' >> ~/.aws/credentials &&
+            echo 'aws_secret_access_key=$AWS_SECRET_ACCESS_KEY' >> ~/.aws/credentials &&
+            echo '[default]' > ~/.aws/config &&
+            echo 'region=ap-south-1' >> ~/.aws/config &&
             sudo apt update -y && sudo apt upgrade -y &&
             sudo apt install docker.io -y &&
             sudo systemctl start docker &&
