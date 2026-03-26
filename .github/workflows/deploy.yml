@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - main
+      - dev
+      - staging
+  repository_dispatch:
+    types:
+      - deploy
+      - deploy_dev
+      - deploy_staging
+    branches:
+      - main
+      - dev
+      - staging
 
 env:
   AWS_REGION: ap-south-1
@@ -12,9 +23,71 @@ env:
   IMAGE_TAG: latest
 
 jobs:
-  deploy:
+  # Security Scan Job
+  security-scan:
     runs-on: ubuntu-latest
+    outputs:
+      scan-passed: ${{ steps.trivy.outputs.scan-passed }}
+    steps:
+      # 1. Checkout repo
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      # 2. Configure AWS credentials (needed for ECR pull)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3. Login to ECR
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      # 4. Build Docker Image
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
+          docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+
+      # 5. Run Trivy Security Scan
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          scanners: vuln
+          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+        id: trivy
+
+      # 6. Upload Trivy Results as Artifact
+      - name: Upload Trivy Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-results
+          path: trivy-results.sarif
+          retention-days: 30
+
+      # 7. Publish Trivy Results to GitHub Security
+      - name: Publish Trivy Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+        if: always()
+
+  # Build and Push Job
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: security-scan
     steps:
       # 1. Checkout repo
       - name: Checkout
@@ -42,11 +115,23 @@ jobs:
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
 
-      # 5. Deploy to EC2 (uses IAM Role)
+  # Deploy Job
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment:
+      name: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
+    steps:
+      # 1. Checkout repo
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Deploy to EC2 (uses IAM Role)
       - name: Deploy to EC2
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
@@ -67,11 +152,12 @@ jobs:
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
 
-      # 6. Slack Notification
+      # 3. Slack Notification
       - name: Slack Notification
         if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             STATUS="SUCCESS"
@@ -81,7 +167,7 @@ jobs:
 
           if [ -n "$SLACK_WEBHOOK" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"Deployment $STATUS for $GITHUB_REPOSITORY on branch $GITHUB_REF\"}" \
+              --data "{\"text\":\"Deployment $STATUS for $GITHUB_REPOSITORY on branch $BRANCH\"}" \
               "$SLACK_WEBHOOK"
           else
             echo "SLACK_WEBHOOK not configured, skipping notification"

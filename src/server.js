@@ -14,7 +14,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname === "/") {
     return sendJson(res, 200, {
-      message: "Simple Node.js backend service is running in dev  also health check is working fine in dev "
+      message: "Simple Node.js backend service is running in dev  also health check is working fine in dev environment" "
     });
   }
 
