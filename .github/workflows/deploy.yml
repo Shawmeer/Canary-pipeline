@@ -52,38 +52,25 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
+          # Run deployment commands via SSH
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP <<'EOF'
-
-            AWS_REGION=ap-south-1
-            ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com
-            ECR_REPO=devops-app-repo
-            IMAGE_TAG=latest
-
-            # Login to ECR via IAM Role
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "sudo bash -c 'AWS_REGION=ap-south-1 && \
+            ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com && \
+            ECR_REPO=devops-app-repo && \
+            IMAGE_TAG=latest && \
             aws ecr get-login-password --region $AWS_REGION | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY
-
-            # Pull latest image
-            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-
-            # Restart container
-            docker stop app || true
-            docker rm app || true
-
-            docker run -d \
-              --restart always \
-              -p 3000:3000 \
-              --name app \
-              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-
-            EOF
+              docker login --username AWS --password-stdin $ECR_REGISTRY && \
+            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
+            docker stop app || true && \
+            docker rm app || true && \
+            docker run -d --restart always -p 3000:3000 --name app $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
 
-      # 7. Slack Notification
+      # 6. Slack Notification
       - name: Slack Notification
         if: always()
         env:
@@ -95,6 +82,10 @@ jobs:
             STATUS="FAILURE"
           fi
 
-          curl -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"Deployment $STATUS for $GITHUB_REPOSITORY on branch $GITHUB_REF\"}" \
-            $SLACK_WEBHOOK
+          if [ -n "$SLACK_WEBHOOK" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"Deployment $STATUS for $GITHUB_REPOSITORY on branch $GITHUB_REF\"}" \
+              "$SLACK_WEBHOOK"
+          else
+            echo "SLACK_WEBHOOK not configured, skipping notification"
+          fi
