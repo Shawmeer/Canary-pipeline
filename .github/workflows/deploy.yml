@@ -76,10 +76,10 @@ jobs:
 
       # 7. Publish Trivy Results to GitHub Security
       - name: Publish Trivy Results to GitHub Security
+        if: false
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-        if: always()
 
   # Build and Push Job
   build-and-push:
