@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 env:
   AWS_REGION: ap-south-1
   ECR_REGISTRY: 317287357166.dkr.ecr.ap-south-1.amazonaws.com
@@ -16,11 +19,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials
+      - name: Validate required secrets
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          EC2_IP: ${{ secrets.EC2_IP }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          test -n "$AWS_ACCESS_KEY_ID" || (echo "Missing secret: AWS_ACCESS_KEY_ID" && exit 1)
+          test -n "$AWS_SECRET_ACCESS_KEY" || (echo "Missing secret: AWS_SECRET_ACCESS_KEY" && exit 1)
+          test -n "$EC2_IP" || (echo "Missing secret: EC2_IP" && exit 1)
+          test -n "$EC2_SSH_KEY" || (echo "Missing secret: EC2_SSH_KEY" && exit 1)
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,59 +41,52 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Login to ECR
       - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+        uses: aws-actions/amazon-ecr-login@v2
 
-      # 4. Build and Push Docker Image
       - name: Build and Push Docker Image
         run: |
-          docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
+          docker build -f dockerfile -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
           docker tag ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} \
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
 
-      # 5. Deploy to EC2
+      - name: Prepare SSH key
+        env:
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          printf '%s\n' "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
       - name: Deploy to EC2
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
-            
-            # Login to ECR
-            aws ecr get-login-password --region $AWS_REGION | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY
-            
-            # Pull and run container
-            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+            aws ecr get-login-password --region ap-south-1 | \
+              docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com
+            docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:latest
             docker stop app || true
             docker rm app || true
             docker run -d \
               --restart always \
-              -p 3000:3000 \
+              -p 80:3000 \
               --name app \
-              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-            
+              317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:latest
             EOF
 
-      # 6. Verify Deployment
       - name: Verify Deployment
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           sleep 10
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
 
-      # 7. Slack Notification
       - name: Slack Notification
-        if: always()   # Run on success or failure
+        if: always() && secrets.SLACK_WEBHOOK != ''
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
