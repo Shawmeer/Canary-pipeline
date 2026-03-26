@@ -229,6 +229,7 @@ jobs:
     env:
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
       VERSION: ${{ needs.get-version.outputs.image_tag }}
+      ENV_NAME: ${{ needs.get-version.outputs.environment }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -246,6 +247,8 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
+          echo "Deploying $CONTAINER_NAME on port $PORT with ENV: ENVIRONMENT=$ENV_NAME, VERSION=$VERSION, GIT_SHA=$GIT_SHA"
+
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "sudo bash -c ' \
@@ -253,9 +256,9 @@ jobs:
             docker stop $CONTAINER_NAME || true && \
             docker rm $CONTAINER_NAME || true && \
             docker run -d --restart always -p $PORT:3000 \
-              -e ENVIRONMENT=\$ENV_NAME \
-              -e VERSION=\$VERSION \
-              -e GIT_SHA=\$GIT_SHA \
+              -e ENVIRONMENT=$ENV_NAME \
+              -e VERSION=$VERSION \
+              -e GIT_SHA=$GIT_SHA \
               --name $CONTAINER_NAME \
               ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG'"
 
