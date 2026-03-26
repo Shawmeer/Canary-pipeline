@@ -135,6 +135,9 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
           BRANCH: ${{ github.ref_name }}
+          ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
+          PORT: ${{ github.ref_name == 'main' && '3000' || github.ref_name == 'staging' && '3001' || '3002' }}
+          CONTAINER_NAME: ${{ github.ref_name == 'main' && 'app-prod' || github.ref_name == 'staging' && 'app-staging' || 'app-dev' }}
         run: |
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
@@ -146,15 +149,17 @@ jobs:
             "sudo bash -c 'ECR_REGISTRY=${{ env.ECR_REGISTRY }} && \
             ECR_REPO=${{ env.ECR_REPO }} && \
             IMAGE_TAG=${{ env.IMAGE_TAG }} && \
-            ENVIRONMENT=${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }} && \
+            ENVIRONMENT=${{ env.ENVIRONMENT }} && \
+            PORT=${{ env.PORT }} && \
+            CONTAINER_NAME=${{ env.CONTAINER_NAME }} && \
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG && \
-            docker stop app || true && \
-            docker rm app || true && \
-            docker run -d --restart always -p 3000:3000 -e ENVIRONMENT=$ENVIRONMENT --name app $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
+            docker stop $CONTAINER_NAME || true && \
+            docker rm $CONTAINER_NAME || true && \
+            docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=$ENVIRONMENT --name $CONTAINER_NAME $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG'"
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker ps | grep app"
+            "docker ps | grep ${{ env.CONTAINER_NAME }}"
 
       # 3. Slack Notification
       - name: Slack Notification
