@@ -55,41 +55,29 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP <<'EOF'
 
-AWS_REGION=ap-south-1
-ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com
-ECR_REPO=devops-app-repo
-IMAGE_TAG=latest
+            AWS_REGION=ap-south-1
+            ECR_REGISTRY=317287357166.dkr.ecr.ap-south-1.amazonaws.com
+            ECR_REPO=devops-app-repo
+            IMAGE_TAG=latest
 
-# Login to ECR via IAM Role
-aws ecr get-login-password --region $AWS_REGION | \
-  docker login --username AWS --password-stdin $ECR_REGISTRY
+            # Login to ECR via IAM Role
+            aws ecr get-login-password --region $AWS_REGION | \
+              docker login --username AWS --password-stdin $ECR_REGISTRY
 
-# Pull latest image
-docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+            # Pull latest image
+            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
 
-# Restart container
-docker stop app || true
-docker rm app || true
+            # Restart container
+            docker stop app || true
+            docker rm app || true
 
-docker run -d \
-  --restart always \
-  -p 3000:3000 \
-  --name app \
-  $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+            docker run -d \
+              --restart always \
+              -p 3000:3000 \
+              --name app \
+              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
 
-EOF
-
-      # 6. Verify Deployment
-      - name: Verify Deployment
-        env:
-          EC2_IP: ${{ secrets.EC2_IP }}
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          mkdir -p /tmp
-          echo "$PRIVATE_KEY" > /tmp/private_key.pem
-          chmod 600 /tmp/private_key.pem
-
-          sleep 10
+            EOF
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
