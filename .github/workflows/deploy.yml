@@ -51,6 +51,9 @@ jobs:
             sudo systemctl start docker &&
             sudo systemctl enable docker &&
             sudo usermod -aG docker ubuntu || true;
+            curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip &&
+            unzip -q /tmp/awscliv2.zip -d /tmp &&
+            sudo /tmp/aws/install &&
             aws ecr get-login-password --region ap-south-1 | sudo docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com;
             sudo docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest &&
             sudo docker stop app || true &&
