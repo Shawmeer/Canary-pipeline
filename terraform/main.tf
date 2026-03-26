@@ -114,15 +114,54 @@ resource "aws_instance" "web" {
     Name = " devops-ec2-instance"
   }
 }
-#ECR Repository
+# To replace the old repository, first delete it with force_delete
+# Then create new environment-specific repositories
+
+# Old repository - keep for migration, will be removed after
 resource "aws_ecr_repository" "app" {
   name = "devops-app-repo"
   image_tag_mutability = "MUTABLE"
   image_scanning_configuration {
     scan_on_push = true
   }
+  force_delete = true  # Enable to allow deletion even with images
   tags = {
     "name" = "devops-app-repo"
   }
 }
+
+# New ECR Repositories for each environment
+resource "aws_ecr_repository" "prod" {
+  name = "devops-app-prod"
+  image_tag_mutability = "MUTABLE"
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = {
+    "environment" = "production"
+  }
+}
+
+resource "aws_ecr_repository" "dev" {
+  name = "devops-app-dev"
+  image_tag_mutability = "MUTABLE"
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = {
+    "environment" = "development"
+  }
+}
+
+resource "aws_ecr_repository" "staging" {
+  name = "devops-app-staging"
+  image_tag_mutability = "MUTABLE"
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = {
+    "environment" = "staging"
+  }
+}
+
 
