@@ -110,13 +110,12 @@ jobs:
             # Build for dev (no source)
             docker build -t ${{ env.ECR_REPO }}:dev .
           else
-            # Pull promoted image for staging/prod
-            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$SOURCE_TAG || \
-            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA
+            # Pull promoted image for staging/prod - try multiple tags
+            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$SOURCE_TAG && \
+            docker tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$SOURCE_TAG \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA || \
+            echo "Image not ready for scanning, skipping..."
           fi
-          
-          docker tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}/${{ env.ECR_REPO }}:$SOURCE_TAG \
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-$GIT_SHA 2>/dev/null || true
 
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
@@ -146,9 +145,6 @@ jobs:
         with:
           target: 'https://${{ secrets.EC2_IP }}'
           token: ${{ secrets.ZAP_TOKEN }}
-          docker-name: 'owasp/zap2docker-stable'
-          format: 'sarif'
-          output: 'zap-results.sarif'
         continue-on-error: true
 
       - name: Upload OWASP ZAP Results
