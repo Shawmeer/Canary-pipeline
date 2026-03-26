@@ -46,11 +46,12 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
           ssh -o StrictHostKeyChecking=no -i /tmp/private_key.pem ubuntu@$EC2_IP "
-            sudo apt update -y && sudo apt upgrade -y 
+            sudo apt update -y && sudo apt upgrade -y &&
             sudo apt install docker.io -y &&
             sudo systemctl start docker &&
             sudo systemctl enable docker &&
-            sudo usermod -aG docker ubuntu &&
+            sudo usermod -aG docker ubuntu || true;
+            aws ecr get-login-password --region ap-south-1 | sudo docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com;
             sudo docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest &&
             sudo docker stop app || true &&
             sudo docker rm app || true &&
