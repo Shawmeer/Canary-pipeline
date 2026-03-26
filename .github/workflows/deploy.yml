@@ -144,16 +144,30 @@ jobs:
             
           elif [ "$BRANCH" = "staging" ]; then
             echo "Promoting dev image to staging..."
-            # Pull the exact SHA image from dev
-            docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
-            docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:staging
+            # Try to pull exact SHA, fallback to dev tag
+            if docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA; then
+              docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:staging
+            else
+              echo "SHA image not found, using dev tag"
+              docker pull $ECR_REGISTRY/$ECR_REPO:dev
+              docker tag $ECR_REGISTRY/$ECR_REPO:dev $ECR_REGISTRY/$ECR_REPO:staging
+              docker tag $ECR_REGISTRY/$ECR_REPO:dev $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+              docker push $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            fi
             docker push $ECR_REGISTRY/$ECR_REPO:staging
             
           else
-            echo "Promoting staging image to production..."
-            # Pull the exact SHA image from staging
-            docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
-            docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:latest
+            echo "Promoting to production..."
+            # Try to pull exact SHA, fallback to staging tag
+            if docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA; then
+              docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:latest
+            else
+              echo "SHA image not found, using staging tag"
+              docker pull $ECR_REGISTRY/$ECR_REPO:staging
+              docker tag $ECR_REGISTRY/$ECR_REPO:staging $ECR_REGISTRY/$ECR_REPO:latest
+              docker tag $ECR_REGISTRY/$ECR_REPO:staging $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+              docker push $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+            fi
             docker push $ECR_REGISTRY/$ECR_REPO:latest
           fi
 
