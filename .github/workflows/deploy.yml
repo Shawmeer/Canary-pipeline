@@ -84,27 +84,36 @@ jobs:
               ;;
           esac
 
-  # Security Scan Job - runs in parallel with build (no dependency on build)
+  # Security Scan Job - runs AFTER build (single scan, best practice)
   security-scan:
     runs-on: ubuntu-latest
-    needs: get-version
+    needs: [get-version, build-and-push]
     env:
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+      IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Prepare Dockerfile for scan
+      - name: Login to ECR
         run: |
-          # Save Dockerfile for later scanning
-          cp Dockerfile /tmp/Dockerfile.scan
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      - name: Run Trivy Scanner on Dockerfile
+      - name: Pull and Scan Image
+        run: |
+          docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+
+      - name: Run Trivy Scanner on Image
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
+          scan-type: 'image'
           scanners: vuln
-          image-ref: '/tmp/Dockerfile.scan'
+          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL'
@@ -120,7 +129,7 @@ jobs:
           path: trivy-results.sarif
           retention-days: 30
 
-  # Build and Push Job - runs in parallel with security-scan
+  # Build and Push Job
   build-and-push:
     runs-on: ubuntu-latest
     needs: get-version
@@ -158,51 +167,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-
-  # Trivy Image Scan - runs AFTER build completes
-  security-scan-image:
-    runs-on: ubuntu-latest
-    needs: [get-version, build-and-push]
-    env:
-      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-      IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
-    steps:
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to ECR
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
-
-      - name: Pull and Scan Image
-        run: |
-          docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
-
-      - name: Run Trivy Scanner on Image
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'image'
-          scanners: vuln
-          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}'
-          format: 'sarif'
-          output: 'trivy-image-results.sarif'
-          severity: 'CRITICAL'
-          exit-code: '0'
-          ignore-unfixed: true
-        continue-on-error: true
-
-      - name: Upload Trivy Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-scan-results-${{ needs.get-version.outputs.branch }}
-          path: trivy-image-results.sarif
-          retention-days: 30
 
   # Deploy Job (reusable for staging/dev/production) - OPTIMIZED
   deploy:
