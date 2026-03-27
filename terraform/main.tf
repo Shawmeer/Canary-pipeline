@@ -160,21 +160,6 @@ resource "aws_ecr_repository" "app" {
   }
 }
 
-# Legacy repos - will be deleted when tf apply runs
-resource "aws_ecr_repository" "prod" {
-  name = "devops-app-prod"
-  force_delete = true
-}
-
-resource "aws_ecr_repository" "dev" {
-  name = "devops-app-dev"
-  force_delete = true
-}
-
-resource "aws_ecr_repository" "staging" {
-  name = "devops-app-staging"
-  force_delete = true
-}
 
 
 
