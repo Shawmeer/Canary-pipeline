@@ -228,7 +228,11 @@ jobs:
 
           echo "Zero-downtime deployment: Starting new container first..."
 
-          # Step 1: Pull new image
+          # Step 1: Pull new image (with ECR login)
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com"
+
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
@@ -350,6 +354,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "sudo bash -c ' \
+            aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com && \
             docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG && \
             docker stop app-canary || true && \
             docker rm app-canary || true && \
