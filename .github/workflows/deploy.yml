@@ -19,6 +19,43 @@ env:
   ECR_REPO: devops-app-repo
 
 jobs:
+  # Ansible EC2 Configuration Job
+  ansible-config:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+
+      - name: Add EC2 IP to inventory
+        run: |
+          echo "${{ secrets.EC2_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem" >> ansible/inventory/hosts.ini
+
+      - name: Create SSH key file
+        run: |
+          mkdir -p /tmp
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ansible-playbook -i inventory/hosts.ini playbooks/ec2-config.yml
+
+      - name: Verify Docker and Nginx
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@${{ secrets.EC2_IP }} \
+            "docker --version && nginx -v && aws --version"
   # Get version info
   get-version:
     runs-on: ubuntu-latest
