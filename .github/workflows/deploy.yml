@@ -261,37 +261,51 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-      - name: Deploy Canary (using HEREDOC)
+      - name: Deploy Canary
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+          ECR_REPO: ${{ env.ECR_REPO }}
         run: |
           echo "Deploying canary to port 3003 (new version)..."
           echo "Production on port 3000 stays running (90% traffic)"
           
+          # ECR login
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
-            set -e
-            
-            # ECR login and pull
-            aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com
-            docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
-            
-            # Stop and remove old canary
-            docker stop app-canary || true
-            docker rm app-canary || true
-            
-            # Run canary container
-            docker run -d --restart always -p 3003:3000 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+          
+          # Pull image
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG"
+          
+          # Stop old canary
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop app-canary || true"
+          
+          # Remove old canary
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm app-canary || true"
+          
+          # Run canary container
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker run -d --restart always -p 3003:3000 \
               -e ENVIRONMENT=canary \
               -e VERSION=$IMAGE_TAG \
               -e GIT_SHA=$GIT_SHA \
               --name app-canary \
-              317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
-              
-            docker ps | grep -E "app-|CONTAINER"
-          EOF
+              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG"
+          
+          # Show containers
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker ps | grep -E 'app-|CONTAINER'"
 
       - name: Quick Health Check
         env:
