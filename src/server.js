@@ -9,7 +9,18 @@ const sendJson = (res, statusCode, payload) => {
   res.end(JSON.stringify(payload));
 };
 
-const server = http.createServer((req, res) => {
+// Simulated health checks (in production, connect to real DB/Redis)
+const checkDatabase = async () => {
+  // Simulate DB connection check
+  return { status: "connected", latency_ms: Math.floor(Math.random() * 10) };
+};
+
+const checkRedis = async () => {
+  // Simulate Redis connection check
+  return { status: "connected", latency_ms: Math.floor(Math.random() * 5) };
+};
+
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "GET" && url.pathname === "/") {
@@ -24,10 +35,25 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
+    // Run async health checks
+    const [dbHealth, redisHealth] = await Promise.all([
+      checkDatabase(),
+      checkRedis()
+    ]);
+    
+    const overallStatus = dbHealth.status === "connected" && redisHealth.status === "connected"
+      ? "ok"
+      : "degraded";
+    
     return sendJson(res, 200, {
-      status: "ok",
+      status: overallStatus,
       uptime: process.uptime(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      dependencies: {
+        database: dbHealth,
+        redis: redisHealth
+      },
+      version: process.env.VERSION || 'unknown'
     });
   }
 
@@ -46,4 +72,6 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);
+  console.log(`Environment: ${process.env.ENVIRONMENT || 'development'}`);
+  console.log(`Version: ${process.env.VERSION || 'unknown'}`);
 });
