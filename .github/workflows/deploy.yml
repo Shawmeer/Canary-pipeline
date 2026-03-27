@@ -42,8 +42,10 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          echo "git_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "git_short={{ github.sha:0:7 }}" >> $GITHUB_OUTPUT
+          GIT_SHA="${{ github.sha }}"
+          GIT_SHORT="${GIT_SHA:0:7}"
+          echo "git_sha=$GIT_SHA" >> $GITHUB_OUTPUT
+          echo "git_short=$GIT_SHORT" >> $GITHUB_OUTPUT
 
       - name: Set environment variables
         id: env
