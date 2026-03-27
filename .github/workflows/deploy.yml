@@ -356,29 +356,28 @@ jobs:
           if [ $PASSED -ge 8 ]; then
             echo "✅ Auto-promoting to 100%..."
             
+            # Stop old production
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
-              set -e
-              
-              # Stop old production
-              docker stop $CONTAINER || true
-              docker rm $CONTAINER || true
-              
-              # Keep canary running! (don't stop/remove)
-              
-              # Deploy new version to production port
-              docker run -d --restart always -p $PORT:3000 \
-                -e ENVIRONMENT=$ENV \
-                -e VERSION=$IMAGE_TAG \
-                -e GIT_SHA=$GIT_SHA \
-                --name $CONTAINER \
-                317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
-              
-              # Reload nginx
-              sudo systemctl reload nginx
-              
-              docker ps --filter "name=app-"
-            EOF
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop $CONTAINER || true"
+            
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker rm $CONTAINER || true"
+            
+            # Deploy new version to production port
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=$ENV -e VERSION=$IMAGE_TAG -e GIT_SHA=$GIT_SHA --name $CONTAINER 317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG"
+            
+            # Reload nginx
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "sudo systemctl reload nginx"
+            
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker ps --filter 'name=app-'"
             
             echo "🎉 PROMOTION COMPLETE!"
             echo "   - Port 3000: NEW version (100%)"
@@ -423,24 +422,32 @@ jobs:
           ENV: ${{ needs.get-version.outputs.environment }}
         run: |
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
-            set -e
-            
-            docker stop $CONTAINER || true
-            docker rm $CONTAINER || true
-            docker stop app-canary || true
-            docker rm app-canary || true
-            
-            docker run -d --restart always -p $PORT:3000 \
-              -e ENVIRONMENT=$ENV \
-              -e VERSION=$IMAGE_TAG \
-              -e GIT_SHA=$GIT_SHA \
-              --name $CONTAINER \
-              317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
-              
-            sudo systemctl reload nginx
-            docker ps --filter "name=app-"
-          EOF
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop $CONTAINER || true"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm $CONTAINER || true"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop app-canary || true"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm app-canary || true"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker run -d --restart always -p $PORT:3000 -e ENVIRONMENT=$ENV -e VERSION=$IMAGE_TAG -e GIT_SHA=$GIT_SHA --name $CONTAINER 317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "sudo systemctl reload nginx"
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker ps --filter 'name=app-'"
           echo "🎉 Manual promotion complete!"
 
   # Rollback Job
