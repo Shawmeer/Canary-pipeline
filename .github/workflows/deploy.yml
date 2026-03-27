@@ -50,22 +50,34 @@ jobs:
       - name: Set environment variables
         id: env
         run: |
-          # Branch config mapping (cleaner than case statement)
-          declare -A BRANCH_CONFIG=(
-            [main]="image_tag=latest,port=3000,container=app-prod,env=production,source=staging,canary=true"
-            [staging]="image_tag=staging,port=3001,container=app-staging,env=staging,source=dev,canary=false"
-            [dev]="image_tag=dev,port=3002,container=app-dev,env=development,source=,canary=false"
-          )
-          
           BRANCH="${{ github.ref_name }}"
-          CONFIG="${BRANCH_CONFIG[$BRANCH]}"
           
-          IFS=',' read -ra PARTS <<< "$CONFIG"
-          for part in "${PARTS[@]}"; do
-            key="${part%%=*}"
-            val="${part#*=}"
-            echo "$key=$val" >> $GITHUB_OUTPUT
-          done
+          case "$BRANCH" in
+            main)
+              echo "image_tag=latest" >> $GITHUB_OUTPUT
+              echo "container_name=app-prod" >> $GITHUB_OUTPUT
+              echo "port=3000" >> $GITHUB_OUTPUT
+              echo "environment=production" >> $GITHUB_OUTPUT
+              echo "source_tag=staging" >> $GITHUB_OUTPUT
+              echo "is_canary=true" >> $GITHUB_OUTPUT
+              ;;
+            staging)
+              echo "image_tag=staging" >> $GITHUB_OUTPUT
+              echo "container_name=app-staging" >> $GITHUB_OUTPUT
+              echo "port=3001" >> $GITHUB_OUTPUT
+              echo "environment=staging" >> $GITHUB_OUTPUT
+              echo "source_tag=dev" >> $GITHUB_OUTPUT
+              echo "is_canary=false" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "image_tag=dev" >> $GITHUB_OUTPUT
+              echo "container_name=app-dev" >> $GITHUB_OUTPUT
+              echo "port=3002" >> $GITHUB_OUTPUT
+              echo "environment=development" >> $GITHUB_OUTPUT
+              echo "source_tag=" >> $GITHUB_OUTPUT
+              echo "is_canary=false" >> $GITHUB_OUTPUT
+              ;;
+          esac
 
   # Security Scan Job
   security-scan:
