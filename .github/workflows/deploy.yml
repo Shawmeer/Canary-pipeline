@@ -179,21 +179,25 @@ jobs:
       - name: Deploy to EC2 (using HEREDOC)
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
-          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
-          PORT: ${{ needs.get-version.outputs.port }}
-          CONTAINER: ${{ needs.get-version.outputs.container_name }}
-          ENV: ${{ needs.get-version.outputs.environment }}
-          GIT_SHA: ${{ needs.get-version.outputs.git_short }}
         run: |
+          # Set variables explicitly for shell expansion
+          IMAGE_TAG="${{ needs.get-version.outputs.image_tag }}"
+          PORT="${{ needs.get-version.outputs.port }}"
+          CONTAINER="${{ needs.get-version.outputs.container_name }}"
+          ENV="${{ needs.get-version.outputs.environment }}"
+          GIT_SHA="${{ needs.get-version.outputs.git_short }}"
+          ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          ECR_REPO="${{ env.ECR_REPO }}"
+          
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
+            -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
             set -e
             
             # ECR login
-            aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com
+            aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
             
             # Pull image
-            docker pull 317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
+            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
             
             # Stop and remove old container
             docker stop $CONTAINER || true
@@ -205,7 +209,7 @@ jobs:
               -e VERSION=$IMAGE_TAG \
               -e GIT_SHA=$GIT_SHA \
               --name $CONTAINER \
-              317287357166.dkr.ecr.ap-south-1.amazonaws.com/devops-app-repo:$IMAGE_TAG
+              $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
               
             # Show running containers
             docker ps --filter "name=app-"
