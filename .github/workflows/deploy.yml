@@ -208,15 +208,14 @@ jobs:
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
           ECR_REPO: ${{ env.ECR_REPO }}
-          AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           # OPTIMIZATION 1: Single SSH session with heredoc (30-40% faster)
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=60 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
             set -e
 
-            # ECR Login (uses EC2's IAM role)
-            aws ecr get-login-password --region $AWS_REGION | \
+            # ECR Login (uses EC2's IAM role - hardcoded region)
+            aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
 
             # Pull image
@@ -276,7 +275,6 @@ jobs:
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
           ECR_REPO: ${{ env.ECR_REPO }}
-          AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           # OPTIMIZATION 1: Single SSH session for canary deployment
           # OPTIMIZATION 3: Uses reusable deploy.sh script
@@ -284,8 +282,8 @@ jobs:
             -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
             set -e
 
-            # ECR Login (uses EC2's IAM role)
-            aws ecr get-login-password --region $AWS_REGION | \
+            # ECR Login (uses EC2's IAM role - hardcoded region since not secret)
+            aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
 
             # Pull image
