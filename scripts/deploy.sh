@@ -2,7 +2,7 @@
 # deploy.sh - Reusable deployment script for EC2
 # Usage: ./deploy.sh <container_name> <port> <image> <env> <git_sha>
 
-set -e
+set -ex
 
 CONTAINER=$1
 PORT=$2
@@ -16,13 +16,15 @@ echo "Port: $PORT"
 echo "Environment: $ENV"
 echo "Git SHA: $GIT_SHA"
 
-# Create backup of current image (for rollback)
+# Create backup of current image (for rollback) - skip for non-production
 if [ "$CONTAINER" = "app-prod" ]; then
-    CURRENT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "devops-app-repo" | head -1 || true)
+    CURRENT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "devops-app-repo" | head -1 || echo "")
     if [ -n "$CURRENT_IMAGE" ]; then
         echo "Creating backup tag for rollback..."
-        docker tag $CURRENT_IMAGE devops-app-repo:backup || true
+        docker tag "$CURRENT_IMAGE" devops-app-repo:backup || echo "Backup skipped"
         echo "Backup created: devops-app-repo:backup"
+    else
+        echo "No existing image found, skipping backup"
     fi
 fi
 
@@ -40,7 +42,7 @@ docker run -d --restart always -p $PORT:3000 \
   --name $CONTAINER \
   $IMAGE
 
-# Cleanup old images (keep only last 5)
+# Cleanup old images
 echo "Cleaning up old Docker images..."
 docker image prune -af --filter "until=24h" || true
 
