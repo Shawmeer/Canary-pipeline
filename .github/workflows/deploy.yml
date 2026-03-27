@@ -273,21 +273,25 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          ECR_REPO: ${{ env.ECR_REPO }}
         run: |
+          # Hardcoded ECR values (constants)
+          ECR_REGISTRY="317287357166.dkr.ecr.ap-south-1.amazonaws.com"
+          ECR_REPO="devops-app-repo"
+          
           # OPTIMIZATION 1: Single SSH session for canary deployment
           # OPTIMIZATION 3: Uses reusable deploy.sh script
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=60 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
+            -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
             set -e
+
+            echo "=== Starting deploy ==="
+            echo "Image tag: $IMAGE_TAG"
+            echo "ECR Registry: $ECR_REGISTRY"
+            echo "ECR Repo: $ECR_REPO"
 
             # ECR Login (uses EC2's IAM role - hardcoded region since not secret)
             aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
-
-            # Debug: print what we're pulling
-            echo "Pulling: $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG"
 
             # Pull image
             docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG || echo "Pull failed!"
@@ -317,12 +321,14 @@ jobs:
           EC2_IP: ${{ secrets.EC2_IP }}
           IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          ECR_REPO: ${{ env.ECR_REPO }}
           PORT: ${{ needs.get-version.outputs.port }}
           CONTAINER: ${{ needs.get-version.outputs.container_name }}
           ENV: ${{ needs.get-version.outputs.environment }}
         run: |
+          # Hardcoded ECR values (constants)
+          ECR_REGISTRY="317287357166.dkr.ecr.ap-south-1.amazonaws.com"
+          ECR_REPO="devops-app-repo"
+          
           # OPTIMIZATION 2: Move monitoring OUT of pipeline
           # Pipeline finishes in 2-3 min instead of 10 min
           echo "Starting background canary monitor on EC2..."
@@ -392,9 +398,11 @@ jobs:
           IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
           GIT_SHA: ${{ needs.get-version.outputs.git_short }}
           ENV: ${{ needs.get-version.outputs.environment }}
-          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          ECR_REPO: ${{ env.ECR_REPO }}
         run: |
+          # Hardcoded ECR values (constants)
+          ECR_REGISTRY="317287357166.dkr.ecr.ap-south-1.amazonaws.com"
+          ECR_REPO="devops-app-repo"
+          
           # OPTIMIZATION 1: Single SSH session for promotion
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=60 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
