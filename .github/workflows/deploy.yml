@@ -255,13 +255,19 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-      - name: Upload scripts to EC2
+      - name: Upload scripts and nginx config to EC2
         run: |
           # Upload deploy scripts to EC2
           scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem \
-            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh \
+            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh scripts/canary-weight.conf \
             ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/
+          
+          # Upload nginx prod config
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem \
+            nginx/prod.conf \
+            ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/prod.conf
           
           # Make scripts executable
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
@@ -380,12 +386,16 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-      - name: Upload scripts to EC2
+      - name: Upload scripts and nginx config to EC2
         run: |
           scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem \
-            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh \
+            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh scripts/canary-weight.conf \
             ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem \
+            nginx/prod.conf \
+            ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/prod.conf
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@${{ secrets.EC2_IP }} \
             "chmod +x /home/ubuntu/*.sh"
@@ -441,12 +451,16 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-      - name: Upload scripts to EC2
+      - name: Upload scripts and nginx config to EC2
         run: |
           scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem \
-            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh \
+            scripts/deploy.sh scripts/monitor-canary.sh scripts/update-canary-weight.sh scripts/canary-weight.conf \
             ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem \
+            nginx/prod.conf \
+            ubuntu@${{ secrets.EC2_IP }}:/home/ubuntu/prod.conf
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@${{ secrets.EC2_IP }} \
             "chmod +x /home/ubuntu/*.sh"
