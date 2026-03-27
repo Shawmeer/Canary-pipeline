@@ -112,12 +112,41 @@
         path: /etc/nginx/sites-available
         state: directory
 
-    - name: Deploy Nginx configuration
+    - name: Deploy Dev Nginx configuration
       copy:
-        src: "{{ nginx_config_path }}"
-        dest: /etc/nginx/nginx.conf
+        src: ../../nginx/dev.conf
+        dest: /etc/nginx/sites-available/dev.conf
         mode: '0644'
-      notify: Reload Nginx
+
+    - name: Deploy Staging Nginx configuration
+      copy:
+        src: ../../nginx/staging.conf
+        dest: /etc/nginx/sites-available/staging.conf
+        mode: '0644'
+
+    - name: Deploy Prod Nginx configuration
+      copy:
+        src: ../../nginx/prod.conf
+        dest: /etc/nginx/sites-available/prod.conf
+        mode: '0644'
+
+    - name: Enable nginx sites
+      file:
+        src: /etc/nginx/sites-available/{{ item }}
+        dest: /etc/nginx/sites-enabled/{{ item }}
+        state: link
+      loop:
+        - dev.conf
+        - staging.conf
+        - prod.conf
+      notify: Test and Reload Nginx
+
+    # Remove default config
+    - name: Remove default site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Test and Reload Nginx
 
     # Test Nginx configuration
     - name: Test Nginx configuration
@@ -131,7 +160,12 @@
         state: present
 
   handlers:
-    - name: Reload Nginx
-      service:
-        name: nginx
-        state: reloaded
+    - name: Test and Reload Nginx
+      block:
+        - name: Test Nginx configuration
+          command: nginx -t
+          changed_when: false
+        - name: Reload Nginx
+          service:
+            name: nginx
+            state: reloaded
