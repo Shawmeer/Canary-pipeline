@@ -139,7 +139,8 @@ resource "aws_instance" "web" {
   subnet_id                   = aws_subnet.main.id
 
   tags = {
-    Name = " devops-ec2-instance"
+    Name = "devops-ec2-instance"
+    Env  = "devops"
   }
 }
 # Single ECR Repository for all environments
