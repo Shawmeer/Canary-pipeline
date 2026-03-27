@@ -12,6 +12,8 @@ on:
       - deploy
       - deploy_dev
       - deploy_staging
+      - promote-canary
+      - rollback
 
 env:
   AWS_REGION: ap-south-1
@@ -199,135 +201,9 @@ jobs:
           path: deployment-info.json
           retention-days: 30
 
-  # Deploy Job
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [get-version, build-and-push]
-    environment:
-      name: ${{ needs.get-version.outputs.environment }}
-    env:
-      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-      VERSION: ${{ needs.get-version.outputs.image_tag }}
-      ENV_NAME: ${{ needs.get-version.outputs.environment }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy to EC2 (Zero Downtime)
-        env:
-          EC2_IP: ${{ secrets.EC2_IP }}
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
-          PORT: ${{ needs.get-version.outputs.port }}
-          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
-          ENV_NAME: ${{ needs.get-version.outputs.environment }}
-        run: |
-          mkdir -p /tmp
-          echo "$PRIVATE_KEY" > /tmp/private_key.pem
-          chmod 600 /tmp/private_key.pem
-
-          echo "Zero-downtime deployment: Starting new container first..."
-
-          # Step 1: Pull new image (with ECR login)
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com"
-
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
-
-          # Step 2: Start new container on a new port (port + 100 for temp)
-          NEW_PORT=$(($PORT + 100))
-          echo "Starting new container on port $NEW_PORT..."
-
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "sudo bash -c '
-            docker run -d --restart always -p $NEW_PORT:3000 \
-              -e ENVIRONMENT=$ENV_NAME \
-              -e VERSION=$VERSION \
-              -e GIT_SHA=$GIT_SHA \
-              --name $CONTAINER_NAME-new \
-              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG'"
-
-          # Step 3: Wait for new container to be healthy
-          echo "Waiting for new container to start..."
-          sleep 5
-
-          # Step 4: Verify new container health
-          HEALTH_CHECK=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "curl -s -o /dev/null -w '%{http_code}' http://localhost:$NEW_PORT/health || echo '000'")
-          
-          echo "New container health check: $HEALTH_CHECK"
-          
-          if [ "$HEALTH_CHECK" != "200" ]; then
-            echo "ERROR: New container health check failed! Rolling back..."
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker stop $CONTAINER_NAME-new || true; docker rm $CONTAINER_NAME-new || true"
-            exit 1
-          fi
-
-          # Step 5: Stop old container (traffic stops here but new is already running)
-          echo "Stopping old container..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker stop $CONTAINER_NAME || true"
-
-          # Step 6: Remove old container
-          echo "Removing old container..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker rm $CONTAINER_NAME || true"
-
-          # Step 7: Rename new container to target name
-          echo "Renaming new container to $CONTAINER_NAME..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker stop $CONTAINER_NAME-new && docker rm $CONTAINER_NAME-new"
-
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker run -d --restart always -p $PORT:3000 \
-              -e ENVIRONMENT=$ENV_NAME \
-              -e VERSION=$VERSION \
-              -e GIT_SHA=$GIT_SHA \
-              --name $CONTAINER_NAME \
-              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
-
-          # Step 8: Verify final deployment
-          sleep 3
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker ps | grep app"
-
-      - name: Slack Notification
-        if: always()
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          BRANCH: ${{ needs.get-version.outputs.branch }}
-          ENVIRONMENT: ${{ needs.get-version.outputs.environment }}
-          VERSION: ${{ needs.get-version.outputs.image_tag }}
-          GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            STATUS="SUCCESS"
-          else
-            STATUS="FAILURE"
-          fi
-
-          if [ -n "$SLACK_WEBHOOK" ]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"Deployment $STATUS to $ENVIRONMENT for $GITHUB_REPOSITORY\\nBranch: $BRANCH\\nVersion: $VERSION\\nGit SHA: $GIT_SHA\"}" \
-              "$SLACK_WEBHOOK"
-          else
-            echo "SLACK_WEBHOOK not configured, skipping notification"
-          fi
-
-  # Canary Deployment Job
-  # Deploys canary version alongside production on same domain with percentage-based traffic splitting
+  # Canary Deployment Job (RUNS FIRST for main branch)
+  # Deploys new version to canary port (3003) while old version stays on production (3000)
+  # This creates true 90% old / 10% new canary split
   canary-deploy:
     runs-on: ubuntu-latest
     needs: [get-version, build-and-push]
@@ -348,6 +224,413 @@ jobs:
         run: |
           mkdir -p /tmp
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+          echo "Deploying CANARY first (new version on port 3003)..."
+          echo "Production (port 3000) keeps running with OLD version for 90% traffic"
+
+          # Deploy canary container on port 3003 (NEW version)
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "sudo bash -c '
+            aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com && \
+            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG && \
+            docker stop app-canary || true && \
+            docker rm app-canary || true && \
+            docker run -d --restart always -p 3003:3000 \
+              -e ENVIRONMENT=canary \
+              -e VERSION=$IMAGE_TAG \
+              -e GIT_SHA=$GIT_SHA \
+              --name app-canary \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG'"
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker ps | grep canary"
+
+      - name: Wait for Canary to Start
+        run: sleep 10
+
+      - name: Verify Canary Health
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+        run: |
+          echo "Checking canary health..."
+          
+          # Check canary health endpoint (NEW version on port 3003)
+          CANARY_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3003/health || echo "000")
+          echo "Canary (new) health response: $CANARY_RESPONSE"
+          
+          # Check production health (OLD version on port 3000)
+          PROD_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3000/health || echo "000")
+          echo "Production (old) health response: $PROD_RESPONSE"
+          
+          # Fail if canary is unhealthy
+          if [ "$CANARY_RESPONSE" != "200" ]; then
+            echo "ERROR: Canary health check failed!"
+            exit 1
+          fi
+          
+          if [ "$PROD_RESPONSE" != "200" ]; then
+            echo "WARNING: Production health check failed!"
+          fi
+          
+          echo "✅ Canary health check passed!"
+          echo "📊 Traffic now: 90% OLD (port 3000) / 10% NEW (port 3003)"
+
+      - name: Check Canary Latency
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+        run: |
+          echo "Checking canary latency..."
+          
+          # Check canary response time
+          START_TIME=$(date +%s%N)
+          curl -s http://$EC2_IP:3003/ > /dev/null
+          END_TIME=$(date +%s%N)
+          CANARY_LATENCY=$(( (END_TIME - START_TIME) / 1000000 )) || CANARY_LATENCY=0
+          echo "Canary latency: ${CANARY_LATENCY}ms"
+          
+          # Check production response time for comparison
+          START_TIME=$(date +%s%N)
+          curl -s http://$EC2_IP:3000/ > /dev/null
+          END_TIME=$(date +%s%N)
+          PROD_LATENCY=$(( (END_TIME - START_TIME) / 1000000 )) || PROD_LATENCY=0
+          echo "Production latency: ${PROD_LATENCY}ms"
+          
+          # Fail if canary latency is too high (> 2x production)
+          if [ $CANARY_LATENCY -gt $((PROD_LATENCY * 2)) ] && [ $PROD_LATENCY -gt 0 ]; then
+            echo "ERROR: Canary latency too high!"
+            exit 1
+          fi
+          
+          echo "Canary monitoring passed!"
+
+      - name: Canary Verified - Ready for Promotion
+        if: success()
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+        run: |
+          echo "✅ Canary verified and running!"
+          echo "📊 Current traffic split:"
+          echo "   - 90% → Production (port 3000) - OLD version"
+          echo "   - 10% → Canary (port 3003) - NEW version"
+          echo ""
+          echo "Starting 5-minute health monitoring..."
+
+      # ============================================================================
+      # AUTO-PROMOTE: Monitor canary health for 5 minutes, then promote to 100%
+      # ============================================================================
+      - name: Monitor Canary Health (5 min) - Auto Promote
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+          
+          CONTAINER_NAME="${{ needs.get-version.outputs.container_name }}"
+          PORT="${{ needs.get-version.outputs.port }}"
+          IMAGE_TAG="${{ needs.get-version.outputs.image_tag }}"
+          GIT_SHA="${{ needs.get-version.outputs.git_short }}"
+          ENV_NAME="${{ needs.get-version.outputs.environment }}"
+          ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          ECR_REPO="${{ env.ECR_REPO }}"
+          
+          echo "Monitoring canary health for 5 minutes..."
+          
+          # Check health every 30 seconds for 5 minutes (10 checks)
+          TOTAL_CHECKS=10
+          PASSED_CHECKS=0
+          
+          for i in $(seq 1 $TOTAL_CHECKS); do
+            echo "--- Check $i of $TOTAL_CHECKS ---"
+            
+            # Check canary health (new version)
+            CANARY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3003/health || echo "000")
+            echo "Canary health: $CANARY_STATUS"
+            
+            # Check production health (old version)
+            PROD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3000/health || echo "000")
+            echo "Production health: $PROD_STATUS"
+            
+            # Count successful checks
+            if [ "$CANARY_STATUS" == "200" ] && [ "$PROD_STATUS" == "200" ]; then
+              PASSED_CHECKS=$((PASSED_CHECKS + 1))
+              echo "✅ Check $i passed"
+            else
+              echo "⚠️ Check $i had issues"
+            fi
+            
+            # Wait 30 seconds before next check
+            if [ $i -lt $TOTAL_CHECKS ]; then
+              echo "Waiting 30 seconds..."
+              sleep 30
+            fi
+          done
+          
+          echo ""
+          echo "Health monitoring complete: $PASSED_CHECKS/$TOTAL_CHECKS passed"
+          
+          # If 80% or more checks passed, auto-promote
+          if [ $PASSED_CHECKS -ge 8 ]; then
+            echo "✅ Health checks passed! Auto-promoting to 100%..."
+            
+            # Stop old production
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop \$CONTAINER_NAME || true"
+            
+            # Remove old
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker rm \$CONTAINER_NAME || true"
+            
+            # Stop canary
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop app-canary || true"
+            
+            # Remove canary
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker rm app-canary || true"
+            
+            # Deploy new version as production
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker run -d --restart always -p \$PORT:3000 \
+                -e ENVIRONMENT=\$ENV_NAME \
+                -e VERSION=\$IMAGE_TAG \
+                -e GIT_SHA=\$GIT_SHA \
+                --name \$CONTAINER_NAME \
+                \$ECR_REGISTRY/\$ECR_REPO:\$IMAGE_TAG"
+            
+            # Reload nginx
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "sudo systemctl reload nginx"
+            
+            sleep 3
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker ps | grep app"
+            
+            echo "🎉 AUTO-PROMOTE COMPLETE! 100% traffic on new version!"
+          else
+            echo "⚠️ Not enough healthy checks ($PASSED_CHECKS/$TOTAL_CHECKS)"
+            echo "Canary will remain at 10%. Send 'promote-canary' to force promote."
+          fi
+
+      - name: Rollback Canary on Failure
+        if: failure()
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          echo "ROLLBACK: Stopping canary container due to health check failure..."
+          
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "sudo docker stop app-canary || true; sudo docker rm app-canary || true"
+          
+          echo "Canary rolled back. Production continues running on port 3000."
+
+  # Promote Job - Only runs AFTER canary passes (manual trigger)
+  # This is where new version goes to 100%
+  promote-canary:
+    runs-on: ubuntu-latest
+    needs: [get-version, canary-deploy]
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'promote-canary'
+    environment:
+      name: production
+    env:
+      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+      VERSION: ${{ needs.get-version.outputs.image_tag }}
+      ENV_NAME: ${{ needs.get-version.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Save SSH key
+        run: |
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+      - name: Promote Canary to 100% Production
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
+          PORT: ${{ needs.get-version.outputs.port }}
+          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
+        run: |
+          echo "Promoting canary to 100% production..."
+          
+          # Step 1: Stop old production container (old version)
+          echo "Stopping old production container..."
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop \$CONTAINER_NAME || true"
+          
+          # Step 2: Remove old container
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm \$CONTAINER_NAME || true"
+          
+          # Step 3: Stop canary container
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop app-canary || true"
+          
+          # Step 4: Remove canary
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm app-canary || true"
+          
+          # Step 5: Start new version as production on port 3000
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker run -d --restart always -p $PORT:3000 \
+              -e ENVIRONMENT=$ENV_NAME \
+              -e VERSION=$VERSION \
+              -e GIT_SHA=$GIT_SHA \
+              --name \$CONTAINER_NAME \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+          
+          # Step 6: Reload nginx
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "sudo systemctl reload nginx"
+          
+          sleep 3
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker ps | grep app"
+          
+          echo "🎉 PROMOTION COMPLETE! 100% traffic now on new version!"
+
+      - name: Rollback on Failure
+        if: failure()
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          echo "ROLLBACK: Promotion failed. Restarting old production..."
+          
+          # Restart old container if it exists
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker start $CONTAINER_NAME || true"
+          
+          echo "Rolled back to old version."
+
+  # Deploy Job (for staging/dev - NOT main branch)
+  # Main branch uses canary-deploy + promote workflow instead
+  deploy-staging-dev:
+    runs-on: ubuntu-latest
+    needs: [get-version, build-and-push]
+    if: needs.get-version.outputs.branch != 'main'
+    environment:
+      name: ${{ needs.get-version.outputs.environment }}
+    env:
+      GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+      VERSION: ${{ needs.get-version.outputs.image_tag }}
+      ENV_NAME: ${{ needs.get-version.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
+          PORT: ${{ needs.get-version.outputs.port }}
+          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
+        run: |
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+          echo "Deploying to $ENV_NAME on port $PORT..."
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com"
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop \$CONTAINER_NAME || true; docker rm \$CONTAINER_NAME || true"
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker run -d --restart always -p $PORT:3000 \
+              -e ENVIRONMENT=$ENV_NAME \
+              -e VERSION=$VERSION \
+              -e GIT_SHA=$GIT_SHA \
+              --name \$CONTAINER_NAME \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+
+          sleep 3
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker ps"
+
+      - name: Verify Deployment
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PORT: ${{ needs.get-version.outputs.port }}
+        run: |
+          sleep 5
+          HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:$PORT/health || echo "000")
+          echo "Health check: $HEALTH_CHECK"
+          if [ "$HEALTH_CHECK" != "200" ]; then
+            echo "ERROR: Health check failed!"
+            exit 1
+          fi
+          echo "Deployment successful!"
+
+  # Rollback Job
+  rollback:
+    runs-on: ubuntu-latest
+    needs: [get-version]
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'rollback'
+    env:
+      EC2_IP: ${{ secrets.EC2_IP }}
+      PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+      CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Save SSH key
+        run: |
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+
+      - name: Rollback
+        run: |
+          echo "Rolling back to previous version..."
+          
+          # Remove canary
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop app-canary || true; docker rm app-canary || true"
+          
+          # Restart production if stopped
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker start \$CONTAINER_NAME || true"
+          
+          echo "Rolled back."
           chmod 600 /tmp/private_key.pem
 
           # Deploy canary container on port 3003
