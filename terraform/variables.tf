@@ -24,3 +24,15 @@ variable "key_name" {
   default     = "devops-key"
   description = "Name of the key pair"
 }
+
+variable "environment" {
+  type        = string
+  default     = "devops"
+  description = "Environment name (dev, staging, prod)"
+}
+
+variable "app_name" {
+  type        = string
+  default     = "devops-app"
+  description = "Application name for resources"
+}
