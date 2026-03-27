@@ -27,6 +27,7 @@
           - gnupg
           - lsb-release
           - software-properties-common
+          - unzip
         state: present
 
     # Add Docker GPG key
