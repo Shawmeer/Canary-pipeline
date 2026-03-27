@@ -140,16 +140,20 @@ resource "aws_instance" "web" {
 
   tags = {
     Name = "devops-ec2-instance"
-    Env  = "devops"
   }
 }
 # Single ECR Repository for all environments
 resource "aws_ecr_repository" "app" {
   name = "devops-app-repo"
   image_tag_mutability = "MUTABLE"
+  
+  # Basic vulnerability scanning on push (built-in ECR scanning)
+  # Note: For AWS Inspector enhanced scanning, enable it in AWS Console:
+  # ECR > Repository > Image scanning > Enable enhanced scanning
   image_scanning_configuration {
     scan_on_push = true
   }
+  
   force_delete = true
   tags = {
     "name" = "devops-app-repo"
@@ -171,5 +175,6 @@ resource "aws_ecr_repository" "staging" {
   name = "devops-app-staging"
   force_delete = true
 }
+
 
 
