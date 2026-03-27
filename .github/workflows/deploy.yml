@@ -211,7 +211,7 @@ jobs:
         run: |
           # OPTIMIZATION 1: Single SSH session with heredoc (30-40% faster)
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=60 \
-            -i /tmp/private_key.pem ubuntu@$EC2_IP << 'EOF'
+            -i /tmp/private_key.pem ubuntu@$EC2_IP << EOF
             set -e
 
             # ECR Login (uses EC2's IAM role - hardcoded region)
@@ -286,8 +286,11 @@ jobs:
             aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
 
+            # Debug: print what we're pulling
+            echo "Pulling: $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG"
+
             # Pull image
-            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+            docker pull $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG || echo "Pull failed!"
 
             # Deploy canary using reusable script (port 3003)
             bash /home/ubuntu/deploy.sh app-canary 3003 $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG canary $GIT_SHA
