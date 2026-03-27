@@ -396,15 +396,8 @@ jobs:
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
               "docker rm ${CONTAINER_NAME_VAL} || true"
             
-            # Stop canary
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker stop app-canary || true"
-            
-            # Remove canary
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker rm app-canary || true"
+            # DO NOT stop/remove canary - keep it running for X-Canary routing!
+            echo "Keeping canary container running (port 3003) for header-based testing..."
             
             # Deploy new version as production
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
@@ -426,7 +419,10 @@ jobs:
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
               "docker ps | grep app"
             
-            echo "🎉 AUTO-PROMOTE COMPLETE! 100% traffic on new version!"
+            echo ""
+            echo "🎉 PROMOTION COMPLETE!"
+            echo "   - Port 3000: NEW version (100% by default)"
+            echo "   - Port 3003: Canary still running (use X-Canary: 1 header to test)"
           else
             echo "⚠️ Not enough healthy checks ($PASSED_CHECKS/$TOTAL_CHECKS)"
             echo "Canary will remain at 10%. Send 'promote-canary' to force promote."
