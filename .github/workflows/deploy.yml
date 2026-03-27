@@ -325,12 +325,19 @@ jobs:
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
-          PORT: ${{ needs.get-version.outputs.port }}
-          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
-          GIT_SHA: ${{ needs.get-version.outputs.git_short }}
-          ENV_NAME: ${{ needs.get-version.outputs.environment }}
         run: |
+          mkdir -p /tmp
+          echo "$PRIVATE_KEY" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+          
+          CONTAINER_NAME="${{ needs.get-version.outputs.container_name }}"
+          PORT="${{ needs.get-version.outputs.port }}"
+          IMAGE_TAG="${{ needs.get-version.outputs.image_tag }}"
+          GIT_SHA="${{ needs.get-version.outputs.git_short }}"
+          ENV_NAME="${{ needs.get-version.outputs.environment }}"
+          ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          ECR_REPO="${{ env.ECR_REPO }}"
+          
           echo "Monitoring canary health for 5 minutes..."
           
           # Check health every 30 seconds for 5 minutes (10 checks)
@@ -393,12 +400,12 @@ jobs:
             # Deploy new version as production
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker run -d --restart always -p $PORT:3000 \
-                -e ENVIRONMENT=$ENV_NAME \
-                -e VERSION=$IMAGE_TAG \
-                -e GIT_SHA=$GIT_SHA \
+              "docker run -d --restart always -p \$PORT:3000 \
+                -e ENVIRONMENT=\$ENV_NAME \
+                -e VERSION=\$IMAGE_TAG \
+                -e GIT_SHA=\$GIT_SHA \
                 --name \$CONTAINER_NAME \
-                ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+                \$ECR_REGISTRY/\$ECR_REPO:\$IMAGE_TAG"
             
             # Reload nginx
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
