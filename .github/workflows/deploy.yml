@@ -316,8 +316,105 @@ jobs:
           echo "   - 90% → Production (port 3000) - OLD version"
           echo "   - 10% → Canary (port 3003) - NEW version"
           echo ""
-          echo "To promote to 100%: Send 'promote-canary' dispatch event"
-          echo "To rollback: Just let it be - old version still running"
+          echo "Starting 5-minute health monitoring..."
+
+      # ============================================================================
+      # AUTO-PROMOTE: Monitor canary health for 5 minutes, then promote to 100%
+      # ============================================================================
+      - name: Monitor Canary Health (5 min) - Auto Promote
+        env:
+          EC2_IP: ${{ secrets.EC2_IP }}
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          CONTAINER_NAME: ${{ needs.get-version.outputs.container_name }}
+          PORT: ${{ needs.get-version.outputs.port }}
+          IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
+          GIT_SHA: ${{ needs.get-version.outputs.git_short }}
+          ENV_NAME: ${{ needs.get-version.outputs.environment }}
+        run: |
+          echo "Monitoring canary health for 5 minutes..."
+          
+          # Check health every 30 seconds for 5 minutes (10 checks)
+          TOTAL_CHECKS=10
+          PASSED_CHECKS=0
+          
+          for i in $(seq 1 $TOTAL_CHECKS); do
+            echo "--- Check $i of $TOTAL_CHECKS ---"
+            
+            # Check canary health (new version)
+            CANARY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3003/health || echo "000")
+            echo "Canary health: $CANARY_STATUS"
+            
+            # Check production health (old version)
+            PROD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:3000/health || echo "000")
+            echo "Production health: $PROD_STATUS"
+            
+            # Count successful checks
+            if [ "$CANARY_STATUS" == "200" ] && [ "$PROD_STATUS" == "200" ]; then
+              PASSED_CHECKS=$((PASSED_CHECKS + 1))
+              echo "✅ Check $i passed"
+            else
+              echo "⚠️ Check $i had issues"
+            fi
+            
+            # Wait 30 seconds before next check
+            if [ $i -lt $TOTAL_CHECKS ]; then
+              echo "Waiting 30 seconds..."
+              sleep 30
+            fi
+          done
+          
+          echo ""
+          echo "Health monitoring complete: $PASSED_CHECKS/$TOTAL_CHECKS passed"
+          
+          # If 80% or more checks passed, auto-promote
+          if [ $PASSED_CHECKS -ge 8 ]; then
+            echo "✅ Health checks passed! Auto-promoting to 100%..."
+            
+            # Stop old production
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop \$CONTAINER_NAME || true"
+            
+            # Remove old
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker rm \$CONTAINER_NAME || true"
+            
+            # Stop canary
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop app-canary || true"
+            
+            # Remove canary
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker rm app-canary || true"
+            
+            # Deploy new version as production
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker run -d --restart always -p $PORT:3000 \
+                -e ENVIRONMENT=$ENV_NAME \
+                -e VERSION=$IMAGE_TAG \
+                -e GIT_SHA=$GIT_SHA \
+                --name \$CONTAINER_NAME \
+                ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+            
+            # Reload nginx
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "sudo systemctl reload nginx"
+            
+            sleep 3
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker ps | grep app"
+            
+            echo "🎉 AUTO-PROMOTE COMPLETE! 100% traffic on new version!"
+          else
+            echo "⚠️ Not enough healthy checks ($PASSED_CHECKS/$TOTAL_CHECKS)"
+            echo "Canary will remain at 10%. Send 'promote-canary' to force promote."
+          fi
 
       - name: Rollback Canary on Failure
         if: failure()
