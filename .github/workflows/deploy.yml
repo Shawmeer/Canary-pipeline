@@ -213,7 +213,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to EC2
+      - name: Deploy to EC2 (Zero Downtime)
         env:
           EC2_IP: ${{ secrets.EC2_IP }}
           PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -226,21 +226,75 @@ jobs:
           echo "$PRIVATE_KEY" > /tmp/private_key.pem
           chmod 600 /tmp/private_key.pem
 
-          echo "Deploying $CONTAINER_NAME on port $PORT with ENV: ENVIRONMENT=$ENV_NAME, VERSION=$VERSION, GIT_SHA=$GIT_SHA"
+          echo "Zero-downtime deployment: Starting new container first..."
+
+          # Step 1: Pull new image
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
+
+          # Step 2: Start new container on a new port (port + 100 for temp)
+          NEW_PORT=$(($PORT + 100))
+          echo "Starting new container on port $NEW_PORT..."
 
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "sudo bash -c ' \
-            docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG && \
-            docker stop $CONTAINER_NAME || true && \
-            docker rm $CONTAINER_NAME || true && \
-            docker run -d --restart always -p $PORT:3000 \
+            "sudo bash -c '
+            docker run -d --restart always -p $NEW_PORT:3000 \
+              -e ENVIRONMENT=$ENV_NAME \
+              -e VERSION=$VERSION \
+              -e GIT_SHA=$GIT_SHA \
+              --name $CONTAINER_NAME-new \
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG'"
+
+          # Step 3: Wait for new container to be healthy
+          echo "Waiting for new container to start..."
+          sleep 5
+
+          # Step 4: Verify new container health
+          HEALTH_CHECK=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "curl -s -o /dev/null -w '%{http_code}' http://localhost:$NEW_PORT/health || echo '000'")
+          
+          echo "New container health check: $HEALTH_CHECK"
+          
+          if [ "$HEALTH_CHECK" != "200" ]; then
+            echo "ERROR: New container health check failed! Rolling back..."
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i /tmp/private_key.pem ubuntu@$EC2_IP \
+              "docker stop $CONTAINER_NAME-new || true; docker rm $CONTAINER_NAME-new || true"
+            exit 1
+          fi
+
+          # Step 5: Stop old container (traffic stops here but new is already running)
+          echo "Stopping old container..."
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop $CONTAINER_NAME || true"
+
+          # Step 6: Remove old container
+          echo "Removing old container..."
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker rm $CONTAINER_NAME || true"
+
+          # Step 7: Rename new container to target name
+          echo "Renaming new container to $CONTAINER_NAME..."
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker stop $CONTAINER_NAME-new && docker rm $CONTAINER_NAME-new"
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            -i /tmp/private_key.pem ubuntu@$EC2_IP \
+            "docker run -d --restart always -p $PORT:3000 \
               -e ENVIRONMENT=$ENV_NAME \
               -e VERSION=$VERSION \
               -e GIT_SHA=$GIT_SHA \
               --name $CONTAINER_NAME \
-              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG'"
+              ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
 
+          # Step 8: Verify final deployment
+          sleep 3
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "docker ps | grep app"
