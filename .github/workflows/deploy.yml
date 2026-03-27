@@ -571,26 +571,30 @@ jobs:
           
           echo "Deploying to $ENV_NAME on port $PORT..."
 
+          # Get ECR login
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
             "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 317287357166.dkr.ecr.ap-south-1.amazonaws.com"
 
+          # Pull image - use local variable values directly
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker pull \$ECR_REGISTRY/\$ECR_REPO:\$IMAGE_TAG"
+            "docker pull ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
 
+          # Stop and remove old container
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker stop \$CONTAINER_NAME || true; docker rm \$CONTAINER_NAME || true"
+            "docker stop ${CONTAINER_NAME} || true; docker rm ${CONTAINER_NAME} || true"
 
+          # Start new container
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
             -i /tmp/private_key.pem ubuntu@$EC2_IP \
-            "docker run -d --restart always -p \$PORT:3000 \
-              -e ENVIRONMENT=\$ENV_NAME \
-              -e VERSION=\$IMAGE_TAG \
-              -e GIT_SHA=\$GIT_SHA \
-              --name \$CONTAINER_NAME \
-              \$ECR_REGISTRY/\$ECR_REPO:\$IMAGE_TAG"
+            "docker run -d --restart always -p ${PORT}:3000 \
+              -e ENVIRONMENT=${ENV_NAME} \
+              -e VERSION=${IMAGE_TAG} \
+              -e GIT_SHA=${GIT_SHA} \
+              --name ${CONTAINER_NAME} \
+              ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
 
           sleep 3
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
