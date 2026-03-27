@@ -377,23 +377,24 @@ jobs:
           if [ $PASSED_CHECKS -ge 8 ]; then
             echo "✅ Health checks passed! Auto-promoting to 100%..."
             
-            CONTAINER_NAME="${{ needs.get-version.outputs.container_name }}"
-            PORT="${{ needs.get-version.outputs.port }}"
-            IMAGE_TAG="${{ needs.get-version.outputs.image_tag }}"
-            GIT_SHA="${{ needs.get-version.outputs.git_short }}"
-            ENV_NAME="${{ needs.get-version.outputs.environment }}"
-            ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
-            ECR_REPO="${{ env.ECR_REPO }}"
+            # Get values directly using step outputs
+            CONTAINER_NAME_VAL=$(echo '${{ needs.get-version.outputs.container_name }}')
+            PORT_VAL=$(echo '${{ needs.get-version.outputs.port }}')
+            IMAGE_TAG_VAL=$(echo '${{ needs.get-version.outputs.image_tag }}')
+            GIT_SHA_VAL=$(echo '${{ needs.get-version.outputs.git_short }}')
+            ENV_NAME_VAL=$(echo '${{ needs.get-version.outputs.environment }}')
+            ECR_REGISTRY_VAL=$(echo '${{ env.ECR_REGISTRY }}')
+            ECR_REPO_VAL=$(echo '${{ env.ECR_REPO }}')
             
             # Stop old production
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker stop \$CONTAINER_NAME || true"
+              "docker stop ${CONTAINER_NAME_VAL} || true"
             
             # Remove old
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker rm \$CONTAINER_NAME || true"
+              "docker rm ${CONTAINER_NAME_VAL} || true"
             
             # Stop canary
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
@@ -408,12 +409,12 @@ jobs:
             # Deploy new version as production
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i /tmp/private_key.pem ubuntu@$EC2_IP \
-              "docker run -d --restart always -p \$PORT:3000 \
-                -e ENVIRONMENT=\$ENV_NAME \
-                -e VERSION=\$IMAGE_TAG \
-                -e GIT_SHA=\$GIT_SHA \
-                --name \$CONTAINER_NAME \
-                \$ECR_REGISTRY/\$ECR_REPO:\$IMAGE_TAG"
+              "docker run -d --restart always -p ${PORT_VAL}:3000 \
+                -e ENVIRONMENT=${ENV_NAME_VAL} \
+                -e VERSION=${IMAGE_TAG_VAL} \
+                -e GIT_SHA=${GIT_SHA_VAL} \
+                --name ${CONTAINER_NAME_VAL} \
+                ${ECR_REGISTRY_VAL}/${ECR_REPO_VAL}:${IMAGE_TAG_VAL}"
             
             # Reload nginx
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
