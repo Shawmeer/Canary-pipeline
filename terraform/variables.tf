@@ -24,3 +24,9 @@ variable "key_name" {
   default     = "devops-key"
   description = "Name of the key pair"
 }
+
+variable "notification_email" {
+  type        = string
+  default     = "admin@example.com"
+  description = "Email for security alert notifications"
+}
