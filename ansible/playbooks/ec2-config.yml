@@ -8,7 +8,7 @@
   gather_facts: yes
 
   vars:
-    nginx_config_path: ../nginx/nginx.conf
+    nginx_config_path: ../../nginx/nginx.conf
 
   tasks:
     # Update apt cache
