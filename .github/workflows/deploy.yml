@@ -164,40 +164,20 @@ jobs:
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-      - name: Build or Promote Image
-        run: |
-          BRANCH="${{ env.BRANCH }}"
-          GIT_SHA="${{ env.GIT_SHA }}"
-          IMAGE_TAG="${{ env.IMAGE_TAG }}"
-          SOURCE_TAG="${{ env.SOURCE_TAG }}"
-          ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
-          ECR_REPO="${{ env.ECR_REPO }}"
-          
-          if [ -z "$SOURCE_TAG" ]; then
-            # Build new image for dev
-            echo "Building new image for dev..."
-            docker build -t $ECR_REPO:$IMAGE_TAG .
-            docker tag $ECR_REPO:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-            docker tag $ECR_REPO:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
-          else
-            # Promote image from source environment
-            echo "Promoting from $SOURCE_TAG to $IMAGE_TAG..."
-            
-            # Try to pull by SHA first, then source tag
-            if ! docker pull $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA 2>/dev/null; then
-              echo "SHA not found, using $SOURCE_TAG tag"
-              docker pull $ECR_REGISTRY/$ECR_REPO:$SOURCE_TAG
-              docker tag $ECR_REGISTRY/$ECR_REPO:$SOURCE_TAG $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
-              docker push $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
-            fi
-            
-            # Tag for target environment
-            docker tag $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-          fi
-          
-          # Push all tags
-          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPO:sha-$GIT_SHA
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push with GitHub Cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
       - name: Create Deployment Info
         run: |
@@ -430,3 +410,4 @@ jobs:
               --data "{\"text\":\"⚠️ CANARY ROLLBACK for $GITHUB_REPOSITORY\\nVersion: ${{ env.IMAGE_TAG }}\\nGit SHA: ${{ env.GIT_SHA }}\\nCanary failed health checks - rolled back\"}" \
               "${{ secrets.SLACK_WEBHOOK }}"
           fi
+
