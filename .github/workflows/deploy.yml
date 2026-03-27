@@ -19,49 +19,6 @@ env:
   ECR_REPO: devops-app-repo
 
 jobs:
-  # Ansible EC2 Configuration Job
-  ansible-config:
-    runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Ansible
-        run: |
-          pip install ansible
-
-      - name: Add EC2 IP to inventory
-        run: |
-          cat > ansible/inventory/hosts.ini << EOF
-          [webservers]
-          ${{ secrets.EC2_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem
-          
-          [webservers:vars]
-          ansible_python_interpreter=/usr/bin/python3
-          EOF
-
-      - name: Create SSH key file
-        run: |
-          mkdir -p /tmp
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/private_key.pem
-          chmod 600 /tmp/private_key.pem
-
-      - name: Run Ansible Playbook
-        run: |
-          cd ansible
-          ansible-playbook -i inventory/hosts.ini playbooks/ec2-config.yml -v
-
-      - name: Verify Docker and Nginx
-        run: |
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-            -i /tmp/private_key.pem ubuntu@${{ secrets.EC2_IP }} \
-            "docker --version && nginx -v && aws --version"
   # Get version info
   get-version:
     runs-on: ubuntu-latest
@@ -185,7 +142,7 @@ jobs:
   # Build and Push Job with Image Promotion
   build-and-push:
     runs-on: ubuntu-latest
-    needs: [get-version, security-scan, ansible-config]
+    needs: [get-version, security-scan]
     env:
       GIT_SHA: ${{ needs.get-version.outputs.git_short }}
       IMAGE_TAG: ${{ needs.get-version.outputs.image_tag }}
@@ -245,7 +202,7 @@ jobs:
   # Deploy Job
   deploy:
     runs-on: ubuntu-latest
-    needs: [get-version, build-and-push, ansible-config]
+    needs: [get-version, build-and-push]
     environment:
       name: ${{ needs.get-version.outputs.environment }}
     env:
@@ -373,7 +330,7 @@ jobs:
   # Deploys canary version alongside production on same domain with percentage-based traffic splitting
   canary-deploy:
     runs-on: ubuntu-latest
-    needs: [get-version, build-and-push, ansible-config]
+    needs: [get-version, build-and-push]
     if: needs.get-version.outputs.branch == 'main'
     environment:
       name: production
