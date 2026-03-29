@@ -116,10 +116,9 @@ jobs:
           image-ref: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ env.GIT_SHA }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'CRITICAL'
-          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
           ignore-unfixed: true
-        continue-on-error: true
 
       - name: Upload Trivy Results
         if: always()
@@ -171,7 +170,7 @@ jobs:
   # Deploy Job (reusable for staging/dev/production) - OPTIMIZED
   deploy:
     runs-on: ubuntu-latest
-    needs: [get-version, build-and-push]
+    needs: [get-version, build-and-push, security-scan]
     if: needs.get-version.outputs.is_canary != 'true'
     environment:
       name: ${{ needs.get-version.outputs.environment }}
@@ -241,7 +240,7 @@ jobs:
   # Canary Deploy Job - OPTIMIZED (monitoring moved to background)
   canary-deploy:
     runs-on: ubuntu-latest
-    needs: [get-version, build-and-push]
+    needs: [get-version, build-and-push, security-scan]
     if: needs.get-version.outputs.is_canary == 'true'
     environment:
       name: production
@@ -492,35 +491,33 @@ jobs:
   # Slack Notification
   notify:
     runs-on: ubuntu-latest
-    needs: [get-version, deploy, canary-deploy, promote-canary, rollback]
+    needs: [get-version, deploy, canary-deploy, promote-canary, rollback, security-scan]
     if: always()
     steps:
       - name: Send Slack Notification
-        if: env.SLACK_WEBHOOK
-        env:
-          DEPLOY_STATUS: ${{ needs.deploy.result }}
-          CANARY_STATUS: ${{ needs.canary-deploy.result }}
-          PROMOTE_STATUS: ${{ needs.promote-canary.result }}
-          ROLLBACK_STATUS: ${{ needs.rollback.result }}
         run: |
-          if [[ "$PROMOTE_STATUS" == "success" ]]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data '{"text":"🎉 Canary Promotion Complete! New version is now in production."}' \
-              ${{ secrets.SLACK_WEBHOOK }}
-          elif [[ "$ROLLBACK_STATUS" == "success" ]]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data '{"text":"🔄 Rollback Complete! Reverted to previous stable version."}' \
-              ${{ secrets.SLACK_WEBHOOK }}
-          elif [[ "$DEPLOY_STATUS" == "success" ]]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"✅ Deployment Successful to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
-              ${{ secrets.SLACK_WEBHOOK }}
-          elif [[ "$CANARY_STATUS" == "success" ]]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"🚀 Canary Deployed to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
-              ${{ secrets.SLACK_WEBHOOK }}
+          if [[ -n "${{ secrets.SLACK_WEBHOOK }}" ]]; then
+            if [[ "${{ needs.promote-canary.result }}" == "success" ]]; then
+              curl -s -X POST -H 'Content-type: application/json' \
+                --data '{"text":"🎉 Canary Promotion Complete! New version is now in production."}' \
+                "${{ secrets.SLACK_WEBHOOK }}"
+            elif [[ "${{ needs.rollback.result }}" == "success" ]]; then
+              curl -s -X POST -H 'Content-type: application/json' \
+                --data '{"text":"🔄 Rollback Complete! Reverted to previous stable version."}' \
+                "${{ secrets.SLACK_WEBHOOK }}"
+            elif [[ "${{ needs.deploy.result }}" == "success" ]]; then
+              curl -s -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"✅ Deployment Successful to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+                "${{ secrets.SLACK_WEBHOOK }}"
+            elif [[ "${{ needs.canary-deploy.result }}" == "success" ]]; then
+              curl -s -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"🚀 Canary Deployed to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+                "${{ secrets.SLACK_WEBHOOK }}"
+            else
+              curl -s -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"❌ Deployment Failed in ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+                "${{ secrets.SLACK_WEBHOOK }}"
+            fi
           else
-            curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"❌ Deployment Failed in ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
-              ${{ secrets.SLACK_WEBHOOK }}
+            echo "SLACK_WEBHOOK secret not set. Skipping notification."
           fi
