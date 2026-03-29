@@ -488,16 +488,35 @@ jobs:
   # Slack Notification
   notify:
     runs-on: ubuntu-latest
-    needs: [get-version, deploy, canary-deploy]
+    needs: [get-version, deploy, canary-deploy, promote-canary, rollback]
     if: always()
     steps:
       - name: Send Slack Notification
         if: env.SLACK_WEBHOOK
+        env:
+          DEPLOY_STATUS: ${{ needs.deploy.result }}
+          CANARY_STATUS: ${{ needs.canary-deploy.result }}
+          PROMOTE_STATUS: ${{ needs.promote-canary.result }}
+          ROLLBACK_STATUS: ${{ needs.rollback.result }}
         run: |
-          STATUS="${{ job.status }}"
-          BRANCH="${{ needs.get-version.outputs.branch }}"
-          ENV="${{ needs.get-version.outputs.environment }}"
-          
-          curl -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"Deployment $STATUS to $ENV ($BRANCH)\"}" \
-            ${{ secrets.SLACK_WEBHOOK }}
+          if [[ "$PROMOTE_STATUS" == "success" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"🎉 Canary Promotion Complete! New version is now in production."}' \
+              ${{ secrets.SLACK_WEBHOOK }}
+          elif [[ "$ROLLBACK_STATUS" == "success" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"🔄 Rollback Complete! Reverted to previous stable version."}' \
+              ${{ secrets.SLACK_WEBHOOK }}
+          elif [[ "$DEPLOY_STATUS" == "success" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"✅ Deployment Successful to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+              ${{ secrets.SLACK_WEBHOOK }}
+          elif [[ "$CANARY_STATUS" == "success" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"🚀 Canary Deployed to ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+              ${{ secrets.SLACK_WEBHOOK }}
+          else
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"❌ Deployment Failed in ${{ needs.get-version.outputs.environment }} (${{ needs.get-version.outputs.branch }})\"}" \
+              ${{ secrets.SLACK_WEBHOOK }}
+          fi
