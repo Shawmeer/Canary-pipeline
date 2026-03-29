@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🚀 Canary Deployment CI/CD Pipeline
 
 A production-ready GitHub Actions workflow for automated deployments to AWS EC2 with **canary deployment strategy**, security scanning, and Slack notifications.
