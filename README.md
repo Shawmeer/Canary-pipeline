@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🚀 Canary Deployment CI/CD Pipeline
 
 A production-ready GitHub Actions workflow for automated deployments to AWS EC2 with **canary deployment strategy**, security scanning, and Slack notifications.
@@ -113,8 +112,7 @@ curl -X POST https://api.github.com/repos/{owner}/{repo}/dispatches \
 ### Required Secrets
 | Secret | Description |
 |--------|-------------|
-| `AWS_ACCESS_KEY` | AWS access key ID |
-| `AWS_SECRET_KEY` | AWS secret access key |
+| `AWS_ROLE_ARN` | ARN of IAM role to assume via OIDC (no access keys needed) |
 | `EC2_SSH_KEY` | Private SSH key for EC2 access |
 | `EC2_IP` | EC2 instance IP address |
 | `SLACK_WEBHOOK` | Slack webhook URL for notifications |
@@ -128,8 +126,9 @@ curl -X POST https://api.github.com/repos/{owner}/{repo}/dispatches \
 
 ## 🔒 Security
 
+- **OIDC Authentication** - Uses GitHub OIDC to assume IAM role (no long-lived credentials)
 - **Trivy Scanning** - Scans Docker images for vulnerabilities
-- **IAM Roles** - Uses EC2 IAM role for ECR authentication
+- **IAM Roles** - Uses EC2 IAM role for ECR authentication on EC2
 - **SSH Key** - Secrets stored in GitHub Actions encrypted
 - **Environment Variables** - Sensitive data never exposed in logs
 
