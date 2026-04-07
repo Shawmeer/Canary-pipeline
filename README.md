@@ -45,6 +45,10 @@ A production-ready GitHub Actions workflow for automated deployments to AWS EC2 
                           └───────────────┘
 ```
 
+![Pipeline Workflow](./pictures/Screenshot%20from%202026-03-29%2013-14-39.png)
+
+![Deployment Flow](./pictures/Screenshot%20from%202026-03-29%2013-15-33.png)
+
 ## 📁 Project Structure
 
 ```
@@ -157,6 +161,13 @@ docker logs <container-name>
 ## 📝 License
 
 MIT License - See LICENSE file for details
+
+---
+
+## 👤 Author
+
+**Shawmeer**
+- GitHub: [https://github.com/Shawmeer](https://github.com/Shawmeer)
 
 ---
 
